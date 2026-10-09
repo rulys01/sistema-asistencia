@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<!--
+  SISTEMA DE REGISTRO DE ASISTENCIA Y CALIFICACIONES
+  Interfaz (HTML + CSS + JS) para Google Apps Script
+  Desarrollador: Mtro. Raúl Dionicio
+-->
+<html lang="es" data-bs-theme="light">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sistema de Asistencia y Calificaciones</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+  body{background:var(--bs-tertiary-bg)}
+  #barra{position:fixed;top:0;left:0;right:0;height:3px;z-index:3000;display:none;background:linear-gradient(90deg,var(--bs-primary),var(--bs-info),var(--bs-primary));background-size:200% 100%;animation:barra 1s linear infinite}
+  @keyframes barra{to{background-position:-200% 0}}
+  @media (prefers-reduced-motion:reduce){#barra{animation:none}}
+  .login-wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:1rem}
+  .login-card{width:100%;max-width:460px}
+  .logo-img{max-height:84px;max-width:180px;object-fit:contain}
+  .menu-link{display:flex;align-items:center;gap:.65rem;padding:.6rem .85rem;border-radius:.5rem;color:var(--bs-body-color);text-decoration:none;margin-bottom:2px}
+  .menu-link:hover{background:var(--bs-secondary-bg)}
+  .menu-link.active{background:var(--bs-primary);color:#fff}
+  @media(min-width:992px){
+    #sidebar{flex:0 0 260px;width:260px!important;position:sticky!important;top:56px;align-self:flex-start;height:calc(100vh - 56px)!important;
+      background:var(--bs-body-bg)!important;border-right:1px solid var(--bs-border-color)!important;overflow-y:auto}
+  }
+  .tabla-cal th,.tabla-cal td{white-space:nowrap;vertical-align:middle;text-align:center}
+  .tabla-cal .nm{text-align:left;position:sticky;left:0;z-index:1;background:var(--bs-body-bg);min-width:200px;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+  .tabla-cal thead th{background:var(--bs-primary);color:#fff;border-color:rgba(255,255,255,.35)}
+  .tabla-cal thead th.nm{z-index:2}
+  .tabla-cal input.calif{width:74px;text-align:center;margin:auto}
+  .tabla-cal th[role=button]{cursor:pointer;text-decoration:underline dotted}
+  .as-row .btn{min-width:46px}
+  .nota{font-size:.82rem}
+  .rep-wrap{background:#fff;border:1px solid var(--bs-border-color);border-radius:.5rem;overflow:auto}
+  .modal-body .form-text{font-size:.8rem}
+  @media print{
+    .no-print,#sidebar,nav.navbar,footer{display:none!important}
+    body{background:#fff!important}
+    #viewGuest .card{border:0!important;box-shadow:none!important}
+  }
+</style>
+</head>
+<body>
+<div id="barra"></div>
+<div id="toasts" class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:3100"></div>
+
+<!-- ============================ ACCESO ============================ -->
+<section id="viewLogin" class="login-wrap">
+  <div class="position-absolute top-0 end-0 p-3">
+    <button class="btn btn-outline-secondary btn-sm" onclick="alternarTema()" title="Cambiar tema claro / oscuro" aria-label="Cambiar tema"><i class="ico-tema bi bi-moon-stars-fill"></i></button>
+  </div>
+  <div class="login-card">
+    <div class="text-center mb-3">
+      <img id="loginLogo" class="logo-img mb-2" alt="Logotipo" style="display:none">
+      <h1 class="h4 mb-0" id="loginInst">Sistema de Asistencia y Calificaciones</h1>
+      <div class="text-body-secondary small" id="loginEnc"></div>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-header p-0">
+        <ul class="nav nav-tabs nav-fill border-0" role="tablist">
+          <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#pLogin" type="button"><i class="bi bi-person-lock"></i> Personal</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#pInvitado" type="button"><i class="bi bi-search"></i> Consulta de calificaciones</button></li>
+        </ul>
+      </div>
+      <div class="card-body tab-content">
+        <form id="pLogin" class="tab-pane fade show active" onsubmit="entrar(event)" autocomplete="on">
+          <div class="mb-3"><label class="form-label" for="lu">Usuario</label>
+            <input id="lu" class="form-control" autocomplete="username" autocapitalize="none" required></div>
+          <div class="mb-3"><label class="form-label" for="lp">Contraseña</label>
+            <input id="lp" type="password" class="form-control" autocomplete="current-password" required></div>
+          <div id="loginErr" class="alert alert-danger py-2 d-none"></div>
+          <button class="btn btn-primary w-100" id="btnLogin"><i class="bi bi-box-arrow-in-right"></i> Iniciar sesión</button>
+        </form>
+        <form id="pInvitado" class="tab-pane fade" onsubmit="consultar(event)">
+          <p class="small text-body-secondary">Escribe la matrícula del estudiante y su clave de consulta (la proporciona el docente).</p>
+          <div class="mb-3"><label class="form-label" for="gm">Matrícula</label>
+            <input id="gm" class="form-control" autocapitalize="characters" required></div>
+          <div class="mb-3"><label class="form-label" for="gc">Clave de consulta</label>
+            <input id="gc" class="form-control" inputmode="numeric" maxlength="12" required></div>
+          <div id="gErr" class="alert alert-danger py-2 d-none"></div>
+          <button class="btn btn-success w-100"><i class="bi bi-search"></i> Consultar calificaciones</button>
+        </form>
+      </div>
+    </div>
+    <p class="text-center small text-body-secondary mt-3 mb-0">Desarrollado por <strong>Mtro. Raúl Dionicio</strong></p>
+  </div>
+</section>
+
+<!-- ============================ INVITADO ============================ -->
+<section id="viewGuest" class="container py-4" style="display:none">
+  <div class="d-flex justify-content-end gap-2 mb-3 no-print">
+    <button class="btn btn-outline-secondary btn-sm" onclick="alternarTema()" aria-label="Cambiar tema"><i class="ico-tema bi bi-moon-stars-fill"></i></button>
+    <button class="btn btn-outline-primary btn-sm" onclick="window.print()"><i class="bi bi-printer"></i> Imprimir</button>
+    <button class="btn btn-secondary btn-sm" onclick="salirInvitado()"><i class="bi bi-arrow-left"></i> Nueva consulta</button>
+  </div>
+  <div id="guestBody"></div>
+  <p class="text-center small text-body-secondary mt-4">Desarrollado por <strong>Mtro. Raúl Dionicio</strong></p>
+</section>
+
+<!-- ============================ APLICACIÓN ============================ -->
+<section id="viewApp" style="display:none">
+  <nav class="navbar bg-primary sticky-top" data-bs-theme="dark" style="height:56px">
+    <div class="container-fluid">
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-outline-light btn-sm d-lg-none" data-bs-toggle="offcanvas" data-bs-target="#sidebar" aria-label="Menú"><i class="bi bi-list fs-5"></i></button>
+        <span class="navbar-brand mb-0 h6 text-truncate" style="max-width:55vw"><i class="bi bi-mortarboard-fill"></i> <span id="navInst">Asistencia y Calificaciones</span></span>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-outline-light btn-sm" onclick="alternarTema()" title="Tema claro / oscuro" aria-label="Cambiar tema"><i class="ico-tema bi bi-moon-stars-fill"></i></button>
+        <div class="dropdown">
+          <button class="btn btn-light btn-sm dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-person-circle"></i> <span class="d-none d-sm-inline" id="navUser"></span></button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><h6 class="dropdown-header" id="navRol"></h6></li>
+            <li><button class="dropdown-item" onclick="formPass(false)"><i class="bi bi-key"></i> Cambiar contraseña</button></li>
+            <li><button class="dropdown-item" onclick="acerca()"><i class="bi bi-info-circle"></i> Acerca de</button></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><button class="dropdown-item text-danger" onclick="salir()"><i class="bi bi-box-arrow-right"></i> Cerrar sesión</button></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </nav>
+  <div class="d-flex">
+    <aside id="sidebar" class="offcanvas-lg offcanvas-start" tabindex="-1" aria-labelledby="sbTit">
+      <div class="offcanvas-header"><h5 class="offcanvas-title" id="sbTit">Menú</h5><button class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#sidebar" aria-label="Cerrar"></button></div>
+      <div class="offcanvas-body flex-column p-2"><nav id="menu" class="w-100"></nav>
+        <div class="mt-auto small text-body-secondary text-center pt-3 w-100">Desarrollado por<br><strong>Mtro. Raúl Dionicio</strong></div></div>
+    </aside>
+    <main class="flex-grow-1 p-3 p-lg-4" style="min-width:0"><div id="contenido"></div></main>
+  </div>
+</section>
+
+<!-- Modal reutilizable -->
+<div class="modal fade" id="mdl" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable" id="mdlDlg"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title" id="mdlTitulo"></h5><button class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+    <div class="modal-body" id="mdlCuerpo"></div>
+    <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal" id="mdlCancel">Cancelar</button><button class="btn btn-primary" id="mdlOk">Guardar</button></div>
+  </div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+/* ============================ UTILIDADES ============================ */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fx = v => { const n = Math.round(Number(v) * 100) / 100; return String(n); };            // 8 | 8.5 | 8.25
+const f1 = v => (Math.round((Number(v) + 1e-9) * 10) / 10).toFixed(1);
+const TRIM = ['Primer', 'Segundo', 'Tercer'], PARC = ['Primer', 'Segundo'];
+const S = { token: null, user: null, perm: {}, cfg: {}, logo: '', clases: [], ctx: { claseId: '', t: 1, p: 1 }, mod: 'inicio', timer: null,
+            as: { pend: {}, ver: 0, fecha: '' }, ac: { pend: {} }, es: {}, rp: { tipo: 'formativa' } };
+const MODS = {};
+let ocupado = 0;
+
+function cargando(d) { ocupado = Math.max(0, ocupado + d); $('#barra').style.display = ocupado ? 'block' : 'none'; }
+function toast(msg, tipo = 'success') {
+  const e = document.createElement('div');
+  e.className = 'toast align-items-center text-bg-' + tipo + ' border-0'; e.setAttribute('role', 'alert');
+  e.innerHTML = '<div class="d-flex"><div class="toast-body">' + esc(msg) + '</div><button class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Cerrar"></button></div>';
+  $('#toasts').appendChild(e);
+  e.addEventListener('hidden.bs.toast', () => e.remove());
+  new bootstrap.Toast(e, { delay: tipo === 'danger' ? 6000 : 3000 }).show();
+}
+window.addEventListener('unhandledrejection', ev => { toast((ev.reason && ev.reason.message) || 'Ocurrió un error.', 'danger'); });
+
+/** Llamada al servidor (personal autenticado). */
+function llamar(accion, datos, silencioso) {
+  return new Promise((res, rej) => {
+    if (!silencioso) cargando(1);
+    google.script.run
+      .withSuccessHandler(r => {
+        if (!silencioso) cargando(-1);
+        if (r && r.ok) return res(r.data);
+        if (r && r.sesion) { toast('Tu sesión expiró. Inicia sesión de nuevo.', 'warning'); salir(true); }
+        rej(new Error(r ? r.error : 'Sin respuesta del servidor.'));
+      })
+      .withFailureHandler(e => { if (!silencioso) cargando(-1); rej(new Error(e.message || 'Error de comunicación.')); })
+      .api(S.token, accion, datos || {});
+  });
+}
+/** Llamada a funciones públicas (login, invitado). */
+const pub = (fn, ...a) => new Promise((res, rej) => {
+  cargando(1);
+  google.script.run.withSuccessHandler(r => { cargando(-1); res(r); })
+    .withFailureHandler(e => { cargando(-1); rej(new Error(e.message || 'Error de comunicación.')); })[fn](...a);
+});
+
+/* ---------- Tema claro / oscuro ---------- */
+function setTema(t) {
+  document.documentElement.setAttribute('data-bs-theme', t);
+  try { localStorage.setItem('tema', t); } catch (e) {}
+  $$('.ico-tema').forEach(i => i.className = 'ico-tema bi bi-' + (t === 'dark' ? 'sun-fill' : 'moon-stars-fill'));
+}
+const alternarTema = () => setTema(document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark');
+(function () {
+  let t = null; try { t = localStorage.getItem('tema'); } catch (e) {}
+  if (!t) t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-bs-theme', t);
+})();
+
+/* ---------- Modal ---------- */
+let mdl = null;
+function modal(o) {
+  const el = $('#mdl');
+  if (mdl) { try { mdl.dispose(); } catch (e) {} }
+  $('#mdlTitulo').textContent = o.titulo;
+  $('#mdlCuerpo').innerHTML = o.cuerpo;
+  $('#mdlDlg').className = 'modal-dialog modal-dialog-scrollable ' + (o.size || '');
+  const b = $('#mdlOk');
+  b.className = 'btn btn-' + (o.okClase || 'primary'); b.textContent = o.ok || 'Guardar'; b.style.display = o.onOk ? '' : 'none'; b.disabled = false;
+  $('#mdlCancel').textContent = o.onOk ? 'Cancelar' : 'Cerrar'; $('#mdlCancel').style.display = '';
+  mdl = new bootstrap.Modal(el, { backdrop: o.estatico ? 'static' : true, keyboard: !o.estatico });
+  b.onclick = async () => {
+    b.disabled = true;
+    try { const r = await o.onOk(); if (r !== false) mdl.hide(); }
+    catch (e) { toast(e.message, 'danger'); }
+    finally { b.disabled = false; }
+  };
+  mdl.show();
+}
+function confirmar(msg, btn = 'Eliminar') {
+  return new Promise(res => {
+    let si = false;
+    modal({ titulo: 'Confirmar', cuerpo: '<p class="mb-0">' + esc(msg) + '</p>', ok: btn, okClase: 'danger', onOk: () => { si = true; } });
+    $('#mdl').addEventListener('hidden.bs.modal', () => res(si), { once: true });
+  });
+}
+const fCampo = (id, lbl, v = '', t = 'text', x = '') => '<div class="mb-3"><label class="form-label" for="' + id + '">' + lbl + '</label><input id="' + id + '" type="' + t + '" class="form-control" value="' + esc(v) + '" ' + x + '></div>';
+const fSel = (id, lbl, opts, v) => '<div class="mb-3"><label class="form-label" for="' + id + '">' + lbl + '</label><select id="' + id + '" class="form-select">' +
+  opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(v) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></div>';
+const fSwitch = (id, lbl, on) => '<div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '><label class="form-check-label" for="' + id + '">' + lbl + '</label></div>';
+const val = id => $('#' + id).value.trim();
+const render = h => { $('#contenido').innerHTML = h; window.scrollTo(0, 0); };
+const spinner = () => '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>';
+const badgeAct = a => a ? '<span class="badge text-bg-success">Activo</span>' : '<span class="badge text-bg-secondary">Inactivo</span>';
+const btnIco = (cls, ico, fn, tit) => '<button class="btn btn-sm btn-outline-' + cls + '" onclick="' + fn + '" title="' + tit + '" aria-label="' + tit + '"><i class="bi bi-' + ico + '"></i></button>';
+const claseTxt = c => c.Asignatura + ' · ' + c.Grado + ' ' + c.Grupo;
+const hoyISO = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const fechaDe = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+const fechaCorta = iso => fechaDe(iso).toLocaleDateString('es-MX', { weekday: 'short', day: '2-digit', month: '2-digit' });
+const fechaLarga = iso => fechaDe(iso).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const sumaDias = (iso, n) => { const d = fechaDe(iso); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const colorCal = v => v == null ? 'secondary' : v < 6 ? 'danger' : v < 8 ? 'warning' : 'success';
+
+/* ============================ ACCESO ============================ */
+(async function inicio() {
+  setTema(document.documentElement.getAttribute('data-bs-theme'));
+  try {
+    const d = await pub('infoPublica');
+    $('#loginInst').textContent = d.institucion || d.titulo;
+    $('#loginEnc').textContent = d.encabezado2 || d.titulo;
+    if (d.logo) { const i = $('#loginLogo'); i.src = d.logo; i.style.display = 'inline-block'; }
+  } catch (e) {}
+})();
+
+async function entrar(ev) {
+  ev.preventDefault();
+  const err = $('#loginErr'), b = $('#btnLogin'); err.classList.add('d-none'); b.disabled = true;
+  try {
+    const r = await pub('login', $('#lu').value, $('#lp').value);
+    if (!r.ok) { err.textContent = r.error; err.classList.remove('d-none'); return; }
+    S.token = r.data.token; $('#lp').value = '';
+    await iniciarApp();
+  } catch (e) { err.textContent = e.message; err.classList.remove('d-none'); }
+  finally { b.disabled = false; }
+}
+
+async function iniciarApp() {
+  const d = await llamar('init');
+  Object.assign(S, { user: d.usuario, perm: d.permisos, cfg: d.config, logo: d.logo, clases: d.clases });
+  if (!S.clases.some(c => c.ClaseID === S.ctx.claseId)) S.ctx.claseId = S.clases.length ? S.clases[0].ClaseID : '';
+  $('#viewLogin').style.display = 'none'; $('#viewApp').style.display = 'block';
+  $('#navInst').textContent = S.cfg.INSTITUCION || 'Asistencia y Calificaciones';
+  $('#navUser').textContent = S.user.nombre; $('#navRol').textContent = 'Rol: ' + S.user.rol;
+  $('#menu').innerHTML = MENU.filter(m => !m[3] || S.perm[m[3]].ver).map(m =>
+    '<a href="#" class="menu-link" data-m="' + m[0] + '" onclick="ir(\'' + m[0] + '\');return false"><i class="bi bi-' + m[1] + '"></i> ' + m[2] + '</a>').join('');
+  ir('inicio');
+  if (S.user.cambiarPass) formPass(true);
+}
+
+async function salir(silencioso) {
+  try { await vaciarTodo(); } catch (e) {}
+  if (S.token && !silencioso) { try { await llamar('salir', {}, true); } catch (e) {} }
+  clearInterval(S.timer); S.token = null;
+  $('#viewApp').style.display = 'none'; $('#viewLogin').style.display = 'flex';
+  if (mdl) { try { mdl.hide(); } catch (e) {} }
+}
+
+function formPass(forzado) {
+  modal({ titulo: forzado ? 'Debes cambiar tu contraseña' : 'Cambiar contraseña', estatico: forzado,
+    cuerpo: (forzado ? '<div class="alert alert-warning py-2">Por seguridad, define una contraseña personal antes de continuar.</div>' : '') +
+      fCampo('f_pa', 'Contraseña actual', '', 'password', 'autocomplete="current-password"') +
+      fCampo('f_pn', 'Nueva contraseña (mínimo 8 caracteres)', '', 'password', 'autocomplete="new-password"') +
+      fCampo('f_pc', 'Confirmar nueva contraseña', '', 'password', 'autocomplete="new-password"'),
+    onOk: async () => {
+      if ($('#f_pn').value !== $('#f_pc').value) throw new Error('La confirmación no coincide.');
+      await llamar('cuenta.password', { actual: $('#f_pa').value, nueva: $('#f_pn').value });
+      S.user.cambiarPass = false; toast('Contraseña actualizada');
+    } });
+  if (forzado) $('#mdlCancel').style.display = 'none'; else $('#mdlCancel').style.display = '';
+}
+function acerca() {
+  modal({ titulo: 'Acerca del sistema', cuerpo: '<p><strong>Sistema de Asistencia y Calificaciones</strong></p><p class="mb-1">Base de datos: Google Sheets · Plataforma: Google Apps Script</p><p class="mb-0">Desarrollador: <strong>Mtro. Raúl Dionicio</strong></p>' });
+}
+
+/* ============================ MENÚ / NAVEGACIÓN ============================ */
+const MENU = [['inicio', 'house', 'Inicio', null], ['docentes', 'person-badge', 'Docentes y asignaturas', 'docentes'],
+  ['estudiantes', 'people', 'Estudiantes', 'estudiantes'], ['asistencia', 'calendar-check', 'Asistencia', 'asistencia'],
+  ['actividades', 'journal-check', 'Actividades y calificaciones', 'actividades'], ['reportes', 'file-earmark-text', 'Reportes', 'reportes'],
+  ['usuarios', 'person-gear', 'Usuarios', 'usuarios'], ['permisos', 'shield-lock', 'Permisos', 'permisos'], ['config', 'gear', 'Configuración', 'config']];
+
+async function vaciarTodo() { if (typeof vaciarAs === 'function') await vaciarAs(); if (typeof guardarAc === 'function') await guardarAc(); }
+
+async function ir(m) {
+  try { await vaciarTodo(); } catch (e) { toast(e.message, 'danger'); }
+  clearInterval(S.timer); S.timer = null; S.mod = m;
+  $$('#menu .menu-link').forEach(a => a.classList.toggle('active', a.dataset.m === m));
+  const oc = bootstrap.Offcanvas.getInstance($('#sidebar')); if (oc) oc.hide();
+  render(spinner());
+  try { await MODS[m](); } catch (e) { render('<div class="alert alert-danger">' + esc(e.message) + '</div>'); }
+}
+
+/** Barra de contexto: asignatura/grupo, trimestre y parcial. */
+function barraCtx() {
+  if (!S.clases.length) return '<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> No tienes asignaturas asignadas. Registra una en <strong>Docentes y asignaturas</strong>.</div>';
+  const c = S.ctx;
+  return '<div class="card mb-3"><div class="card-body py-2"><div class="row g-2">' +
+    '<div class="col-12 col-md-6"><label class="form-label small mb-0" for="cx_c">Asignatura · grado y grupo</label><select id="cx_c" class="form-select form-select-sm">' +
+    S.clases.map(x => '<option value="' + x.ClaseID + '"' + (x.ClaseID === c.claseId ? ' selected' : '') + '>' + esc(claseTxt(x) + (S.user.rol === 'ADMIN' && x.Docente ? ' — ' + x.Docente : '')) + '</option>').join('') + '</select></div>' +
+    '<div class="col-6 col-md-3"><label class="form-label small mb-0" for="cx_t">Trimestre</label><select id="cx_t" class="form-select form-select-sm">' +
+    TRIM.map((n, i) => '<option value="' + (i + 1) + '"' + (c.t === i + 1 ? ' selected' : '') + '>' + n + ' trimestre</option>').join('') + '</select></div>' +
+    '<div class="col-6 col-md-3"><label class="form-label small mb-0" for="cx_p">Parcial</label><select id="cx_p" class="form-select form-select-sm">' +
+    PARC.map((n, i) => '<option value="' + (i + 1) + '"' + (c.p === i + 1 ? ' selected' : '') + '>' + n + ' parcial</option>').join('') + '</select></div>' +
+    '</div></div></div>';
+}
+function bindCtx() {
+  const ch = async () => {
+    try { await vaciarTodo(); } catch (e) { toast(e.message, 'danger'); }
+    S.ctx = { claseId: $('#cx_c').value, t: +$('#cx_t').value, p: +$('#cx_p').value };
+    ir(S.mod);
+  };
+  ['cx_c', 'cx_t', 'cx_p'].forEach(i => { const e = $('#' + i); if (e) e.onchange = ch; });
+}
+const ctxP = () => ({ ClaseID: S.ctx.claseId, Trimestre: S.ctx.t, Parcial: S.ctx.p });
+const claseActual = () => S.clases.find(c => c.ClaseID === S.ctx.claseId);
+
+MODS.inicio = () => {
+  const tarjetas = MENU.filter(m => m[3] && S.perm[m[3]].ver).map(m =>
+    '<div class="col-6 col-md-4 col-xl-3"><a href="#" class="card h-100 text-decoration-none text-center shadow-sm" onclick="ir(\'' + m[0] + '\');return false"><div class="card-body"><i class="bi bi-' + m[1] + ' fs-1 text-primary"></i><div class="mt-2 fw-semibold text-body">' + m[2] + '</div></div></a></div>').join('');
+  render('<div class="mb-4"><h2 class="h4">Bienvenido(a), ' + esc(S.user.nombre) + '</h2><p class="text-body-secondary mb-0">' +
+    (S.clases.length ? 'Tienes ' + S.clases.length + ' asignatura(s) activa(s): ' + esc(S.clases.map(claseTxt).join(' | ')) : 'Aún no hay asignaturas registradas.') +
+    '</p></div><div class="row g-3">' + tarjetas + '</div>');
+};
+
+/* ============================ DOCENTES Y ASIGNATURAS ============================ */
+MODS.docentes = async () => {
+  const d = S.dd = await llamar('docentes.listar'), P = S.perm.docentes;
+  const filaD = x => '<tr><td>' + esc(x.Nombre) + '</td><td class="d-none d-md-table-cell">' + esc(x.Correo) + '</td><td>' + badgeAct(x.Activo) + '</td><td class="text-end text-nowrap">' +
+    (P.editar && d.puedeTodo ? btnIco('primary', 'pencil', "formDocente('" + x.DocenteID + "')", 'Editar') : '') + ' ' +
+    (P.eliminar && d.puedeTodo ? btnIco('danger', 'trash', "delDocente('" + x.DocenteID + "')", 'Eliminar') : '') + '</td></tr>';
+  const filaA = x => '<tr><td>' + esc(x.Asignatura) + '</td><td>' + esc(x.Grado) + ' ' + esc(x.Grupo) + '</td><td class="d-none d-md-table-cell">' + esc(x.Docente) + '</td><td class="d-none d-md-table-cell">' + esc(x.Ciclo) + '</td><td>' + badgeAct(x.Activo) + '</td><td class="text-end text-nowrap">' +
+    (P.editar ? btnIco('primary', 'pencil', "formAsig('" + x.ClaseID + "')", 'Editar') : '') + ' ' +
+    (P.eliminar ? btnIco('danger', 'trash', "delAsig('" + x.ClaseID + "')", 'Eliminar') : '') + '</td></tr>';
+  render('<h2 class="h4 mb-3"><i class="bi bi-person-badge"></i> Docentes y asignaturas</h2>' +
+    '<ul class="nav nav-tabs mb-3"><li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tDoc">Docentes</button></li>' +
+    '<li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tAsig">Asignatura, grado y grupo</button></li></ul>' +
+    '<div class="tab-content"><div class="tab-pane fade show active" id="tDoc">' +
+    (P.crear && d.puedeTodo ? '<button class="btn btn-primary mb-3" onclick="formDocente()"><i class="bi bi-plus-lg"></i> Nuevo docente</button>' : '') +
+    '<div class="table-responsive card"><table class="table table-hover align-middle mb-0"><thead><tr><th>Nombre</th><th class="d-none d-md-table-cell">Correo</th><th>Estado</th><th></th></tr></thead><tbody>' +
+    (d.docentes.map(filaD).join('') || '<tr><td colspan="4" class="text-center text-body-secondary py-4">Sin docentes registrados.</td></tr>') + '</tbody></table></div></div>' +
+    '<div class="tab-pane fade" id="tAsig">' + (P.crear ? '<button class="btn btn-primary mb-3" onclick="formAsig()"><i class="bi bi-plus-lg"></i> Nueva asignatura</button>' : '') +
+    '<div class="table-responsive card"><table class="table table-hover align-middle mb-0"><thead><tr><th>Asignatura</th><th>Grado y grupo</th><th class="d-none d-md-table-cell">Docente</th><th class="d-none d-md-table-cell">Ciclo</th><th>Estado</th><th></th></tr></thead><tbody>' +
+    (d.asignaciones.map(filaA).join('') || '<tr><td colspan="6" class="text-center text-body-secondary py-4">Sin asignaturas registradas.</td></tr>') + '</tbody></table></div></div></div>');
+};
+function formDocente(id) {
+  const x = id ? S.dd.docentes.find(d => d.DocenteID === id) : { Activo: true };
+  modal({ titulo: id ? 'Editar docente' : 'Nuevo docente',
+    cuerpo: fCampo('f_n', 'Nombre completo', x.Nombre) + fCampo('f_c', 'Correo (opcional)', x.Correo, 'email') + fSwitch('f_a', 'Activo', x.Activo),
+    onOk: async () => { await llamar('docentes.guardar', { DocenteID: id, Nombre: val('f_n'), Correo: val('f_c'), Activo: $('#f_a').checked }); toast('Docente guardado'); MODS.docentes(); } });
+}
+async function delDocente(id) {
+  if (!await confirmar('¿Eliminar este docente?')) return;
+  try { await llamar('docentes.eliminar', { DocenteID: id }); toast('Docente eliminado'); MODS.docentes(); } catch (e) { toast(e.message, 'danger'); }
+}
+function formAsig(id) {
+  const x = id ? S.dd.asignaciones.find(a => a.ClaseID === id) : { Activo: true, Ciclo: S.cfg.CICLO || '' };
+  const sel = S.dd.puedeTodo ? fSel('f_d', 'Docente', [['', '— Selecciona —']].concat(S.dd.docentes.map(d => [d.DocenteID, d.Nombre])), x.DocenteID) : '';
+  modal({ titulo: id ? 'Editar asignatura' : 'Nueva asignatura', cuerpo: sel + fCampo('f_as', 'Asignatura', x.Asignatura) +
+    '<div class="row"><div class="col-6">' + fCampo('f_g', 'Grado (ej. 2°)', x.Grado) + '</div><div class="col-6">' + fCampo('f_gr', 'Grupo (ej. E)', x.Grupo) + '</div></div>' +
+    fCampo('f_ci', 'Ciclo escolar', x.Ciclo) + fSwitch('f_a', 'Activa', x.Activo),
+    onOk: async () => {
+      await llamar('docentes.guardarAsig', { ClaseID: id, DocenteID: S.dd.puedeTodo ? val('f_d') : '', Asignatura: val('f_as'), Grado: val('f_g'), Grupo: val('f_gr'), Ciclo: val('f_ci'), Activo: $('#f_a').checked });
+      toast('Asignatura guardada'); const d = await llamar('init'); S.clases = d.clases; MODS.docentes();
+    } });
+}
+async function delAsig(id) {
+  if (!await confirmar('Se eliminará la asignatura con TODA su asistencia, actividades y calificaciones. ¿Continuar?')) return;
+  try { await llamar('docentes.eliminarAsig', { ClaseID: id }); toast('Asignatura eliminada'); const d = await llamar('init'); S.clases = d.clases; MODS.docentes(); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ============================ ESTUDIANTES ============================ */
+MODS.estudiantes = async () => {
+  const pares = Array.from(new Map(S.clases.map(c => [c.Grado + '|' + c.Grupo, c])).values());
+  if (!pares.length) return render('<div class="alert alert-warning">Primero registra una asignatura con su grado y grupo en <strong>Docentes y asignaturas</strong>.</div>');
+  if (!pares.some(c => c.Grado + '|' + c.Grupo === S.es.par)) S.es.par = pares[0].Grado + '|' + pares[0].Grupo;
+  const P = S.perm.estudiantes;
+  render('<h2 class="h4 mb-3"><i class="bi bi-people"></i> Estudiantes</h2><div class="card mb-3"><div class="card-body"><div class="row g-2 align-items-end">' +
+    '<div class="col-12 col-md-3"><label class="form-label small mb-0" for="es_par">Grado y grupo</label><select id="es_par" class="form-select">' +
+    pares.map(c => '<option value="' + esc(c.Grado + '|' + c.Grupo) + '"' + (c.Grado + '|' + c.Grupo === S.es.par ? ' selected' : '') + '>' + esc(c.Grado + ' ' + c.Grupo) + '</option>').join('') + '</select></div>' +
+    '<div class="col-12 col-md-4"><label class="form-label small mb-0" for="es_q">Buscar</label><input id="es_q" class="form-control" placeholder="Nombre o matrícula"></div>' +
+    '<div class="col-12 col-md-5 d-flex flex-wrap gap-2">' +
+    (P.crear ? '<button class="btn btn-primary" onclick="formEst()"><i class="bi bi-plus-lg"></i> Nuevo</button><button class="btn btn-outline-primary" onclick="formImportar()"><i class="bi bi-clipboard-plus"></i> Importar lista</button>' : '') +
+    (P.editar ? '<button class="btn btn-outline-secondary" onclick="ordenarEst()"><i class="bi bi-sort-alpha-down"></i> Ordenar A-Z</button>' : '') +
+    '</div></div></div></div><div id="esLista">' + spinner() + '</div>');
+  $('#es_par').onchange = () => { S.es.par = $('#es_par').value; cargarEs(); };
+  $('#es_q').oninput = pintarEs;
+  await cargarEs();
+};
+async function cargarEs() { const [g, gr] = S.es.par.split('|'); S.es.lista = await llamar('estudiantes.listar', { Grado: g, Grupo: gr }); pintarEs(); }
+function pintarEs() {
+  const q = ($('#es_q').value || '').toLowerCase(), P = S.perm.estudiantes;
+  const l = S.es.lista.filter(e => !q || (e.Nombre + ' ' + e.Matricula).toLowerCase().includes(q));
+  $('#esLista').innerHTML = '<div class="table-responsive card"><table class="table table-hover align-middle mb-0"><thead><tr><th>No.</th><th>Nombre</th><th>Matrícula</th><th>Clave de consulta</th><th class="d-none d-md-table-cell">Etiqueta</th><th></th></tr></thead><tbody>' +
+    (l.map(e => '<tr class="' + (e.Activo ? '' : 'text-body-secondary') + '"><td>' + e.NumLista + '</td><td>' + esc(e.Nombre) + (e.Activo ? '' : ' <span class="badge text-bg-secondary">Baja</span>') + '</td><td>' + esc(e.Matricula) + '</td><td><code>' + esc(e.Clave) + '</code></td><td class="d-none d-md-table-cell">' + esc(e.Etiqueta) + '</td><td class="text-end text-nowrap">' +
+      (P.editar ? btnIco('primary', 'pencil', "formEst('" + e.EstID + "')", 'Editar') : '') + ' ' + (P.eliminar ? btnIco('danger', 'trash', "delEst('" + e.EstID + "')", 'Eliminar') : '') + '</td></tr>').join('') ||
+      '<tr><td colspan="6" class="text-center text-body-secondary py-4">Sin estudiantes. Usa “Nuevo” o “Importar lista”.</td></tr>') + '</tbody></table></div>' +
+    '<p class="nota text-body-secondary mt-2 mb-0"><i class="bi bi-info-circle"></i> La matrícula y la clave de consulta son los datos que el estudiante o tutor usa en el módulo de invitado.</p>';
+}
+function formEst(id) {
+  const e = id ? S.es.lista.find(x => x.EstID === id) : { Activo: true }, [g, gr] = S.es.par.split('|');
+  modal({ titulo: id ? 'Editar estudiante' : 'Nuevo estudiante',
+    cuerpo: fCampo('f_n', 'Nombre (apellidos y nombre)', e.Nombre) + '<div class="row"><div class="col-7">' + fCampo('f_m', 'Matrícula / registro', e.Matricula, 'text', 'placeholder="Automática si se deja vacía"') +
+      '</div><div class="col-5">' + fCampo('f_u', 'No. de lista', e.NumLista || '', 'number', 'min="1"') + '</div></div>' +
+      fCampo('f_e', 'Etiqueta u observación (ej. N.I.)', e.Etiqueta) + fSwitch('f_a', 'Activo (desmarcar = baja)', e.Activo) +
+      (id ? '<div class="small">Clave de consulta: <code id="f_clave">' + esc(e.Clave) + '</code> <button class="btn btn-sm btn-outline-secondary ms-2" type="button" onclick="regenClave(\'' + id + '\')">Generar nueva</button></div>' : ''),
+    onOk: async () => { await llamar('estudiantes.guardar', { EstID: id, Nombre: val('f_n'), Matricula: val('f_m'), NumLista: val('f_u'), Etiqueta: val('f_e'), Activo: $('#f_a').checked, Grado: g, Grupo: gr }); toast('Estudiante guardado'); cargarEs(); } });
+}
+async function regenClave(id) {
+  if (!await confirmar('La clave anterior dejará de funcionar. ¿Generar una nueva?', 'Generar')) return;
+  try { const c = await llamar('estudiantes.clave', { EstID: id }); toast('Nueva clave: ' + c); cargarEs(); } catch (e) { toast(e.message, 'danger'); }
+}
+async function delEst(id) {
+  if (!await confirmar('Se eliminará el estudiante junto con su asistencia y calificaciones. ¿Continuar?')) return;
+  try { await llamar('estudiantes.eliminar', { EstID: id }); toast('Estudiante eliminado'); cargarEs(); } catch (e) { toast(e.message, 'danger'); }
+}
+function formImportar() {
+  const [g, gr] = S.es.par.split('|');
+  modal({ titulo: 'Importar lista de ' + g + ' ' + gr, size: 'modal-lg',
+    cuerpo: '<p class="small text-body-secondary">Pega un nombre por renglón (puedes copiarlos desde Excel). Las marcas finales “N.I.” o “U” se guardan como etiqueta. Se asignan matrícula y clave de consulta automáticas.</p><textarea id="f_t" class="form-control" rows="12" placeholder="APELLIDO APELLIDO NOMBRE"></textarea>',
+    ok: 'Importar', onOk: async () => { const n = await llamar('estudiantes.importar', { Grado: g, Grupo: gr, Texto: $('#f_t').value }); toast(n + ' estudiantes importados'); cargarEs(); } });
+}
+async function ordenarEst() {
+  if (!await confirmar('Se ordenará alfabéticamente y se renumerará la lista. ¿Continuar?', 'Ordenar')) return;
+  const [g, gr] = S.es.par.split('|');
+  try { await llamar('estudiantes.ordenar', { Grado: g, Grupo: gr }); toast('Lista ordenada'); cargarEs(); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ============================ PARCIAL: asistencias para evaluación ============================ */
+function formPeriodo(per, despues) {
+  const c = claseActual(), nuevo = !per;
+  modal({ titulo: 'Asistencias para evaluación', estatico: nuevo,
+    cuerpo: '<p class="mb-1"><strong>' + esc(claseTxt(c)) + '</strong></p><p class="small text-body-secondary">' + TRIM[S.ctx.t - 1] + ' trimestre · ' + PARC[S.ctx.p - 1] + ' parcial</p>' +
+      '<div class="alert alert-info py-2 small">Indica <strong>cuántas asistencias (días de clase)</strong> se tomarán en cuenta para calificar este parcial. La calificación de asistencia es: asistencias × 10 ÷ total de días.</div>' +
+      fCampo('f_td', 'Número de asistencias para evaluación', per ? per.TotalDias : '', 'number', 'min="1" max="300" inputmode="numeric"') +
+      fCampo('f_mes', 'Mes(es) del parcial (ej. sep - nov)', per ? per.Mes : '') +
+      fCampo('f_pa', 'Puntos que vale la asistencia (de 100)', per ? per.PesoAsistencia : 10, 'number', 'min="0" max="100"'),
+    ok: 'Guardar', onOk: async () => {
+      await llamar('asistencia.periodo', Object.assign(ctxP(), { TotalDias: val('f_td'), Mes: val('f_mes'), PesoAsistencia: val('f_pa') }));
+      toast('Parcial configurado'); if (despues) despues(); else ir(S.mod);
+    } });
+}
+
+/* ============================ ASISTENCIA (tiempo real) ============================ */
+MODS.asistencia = async () => {
+  if (!S.clases.length) return render(barraCtx());
+  if (!S.as.fecha) S.as.fecha = hoyISO();
+  S.as.pend = {};
+  render(barraCtx() + '<div id="asBody">' + spinner() + '</div>'); bindCtx();
+  await cargarAs(true);
+  S.timer = setInterval(() => { if (!Object.keys(S.as.pend).length && !document.hidden) cargarAs(false).catch(() => {}); }, 15000);
+};
+async function cargarAs(primera) {
+  const ver = S.as.ver, f = S.as.fecha;
+  const d = await llamar('asistencia.cargar', Object.assign(ctxP(), { Fecha: f }), !primera);
+  if (S.mod !== 'asistencia' || ver !== S.as.ver || f !== S.as.fecha) return;
+  S.as.data = d; pintarAs();
+  if (primera && !d.periodo && S.perm.asistencia.editar) formPeriodo(null);
+}
+function pintarAs() {
+  const d = S.as.data, P = S.perm.asistencia, f = S.as.fecha;
+  $('#asBody').innerHTML =
+    '<div class="card mb-3"><div class="card-body">' +
+    '<div class="row g-2 align-items-end"><div class="col-12 col-md-5"><label class="form-label small mb-0" for="as_f">Fecha de la sesión</label>' +
+    '<div class="input-group"><button class="btn btn-outline-secondary" onclick="irFecha(sumaDias(S.as.fecha,-1))" aria-label="Día anterior"><i class="bi bi-chevron-left"></i></button>' +
+    '<input type="date" id="as_f" class="form-control" value="' + f + '"><button class="btn btn-outline-secondary" onclick="irFecha(sumaDias(S.as.fecha,1))" aria-label="Día siguiente"><i class="bi bi-chevron-right"></i></button>' +
+    '<button class="btn btn-outline-primary" onclick="irFecha(hoyISO())">Hoy</button></div></div>' +
+    '<div class="col-12 col-md-7"><div class="d-flex flex-wrap gap-2 align-items-center">' +
+    '<span class="badge text-bg-primary fs-6">Asistencias para evaluación: ' + (d.periodo ? d.total : '—') + '</span>' +
+    (P.editar ? '<button class="btn btn-sm btn-outline-primary" onclick="formPeriodo(S.as.data.periodo)"><i class="bi bi-sliders"></i> ' + (d.periodo ? 'Configurar' : 'Definir') + '</button>' : '') +
+    '<span class="badge text-bg-secondary">Sesiones registradas: ' + d.fechas.length + '</span></div></div></div>' +
+    '<div class="small text-body-secondary mt-2 text-capitalize">' + esc(fechaLarga(f)) + '</div>' +
+    (d.fechas.length ? '<div class="d-flex flex-wrap gap-1 mt-2">' + d.fechas.map(x => '<button class="btn btn-sm ' + (x === f ? 'btn-primary' : 'btn-outline-secondary') + '" onclick="irFecha(\'' + x + '\')">' + esc(fechaCorta(x)) + '</button>').join('') + '</div>' : '') +
+    '</div></div>' +
+    '<div class="card"><div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">' +
+    '<div id="asResumen" class="d-flex gap-2 flex-wrap"></div><div class="d-flex gap-2 flex-wrap align-items-center"><span id="asEstado" class="small text-body-secondary"></span>' +
+    (P.editar ? '<button class="btn btn-sm btn-success" onclick="marcarTodos(1)"><i class="bi bi-check2-all"></i> Todos presentes</button><button class="btn btn-sm btn-outline-secondary" onclick="marcarTodos(\'\')">Limpiar</button>' : '') +
+    (P.eliminar && d.fechas.indexOf(f) >= 0 ? '<button class="btn btn-sm btn-outline-danger" onclick="borrarFecha()"><i class="bi bi-trash"></i></button>' : '') + '</div></div>' +
+    '<div class="card-body border-bottom py-2"><input id="as_q" class="form-control form-control-sm" placeholder="Buscar estudiante…"></div>' +
+    '<div id="asLista" class="list-group list-group-flush"></div></div>';
+  $('#as_f').onchange = e => irFecha(e.target.value);
+  $('#as_q').oninput = pintarListaAs;
+  pintarListaAs();
+}
+function pintarListaAs() {
+  const d = S.as.data, P = S.perm.asistencia, q = ($('#as_q') ? $('#as_q').value : '').toLowerCase(); let a = 0, b = 0;
+  d.estudiantes.forEach(e => { const v = d.marcas[e.EstID]; if (v === 1) a++; else if (v === 0) b++; });
+  $('#asResumen').innerHTML = '<span class="badge text-bg-success">Presentes ' + a + '</span><span class="badge text-bg-danger">Faltas ' + b + '</span><span class="badge text-bg-secondary">Sin marcar ' + (d.estudiantes.length - a - b) + '</span>';
+  $('#asLista').innerHTML = d.estudiantes.filter(e => !q || e.Nombre.toLowerCase().includes(q)).map(e => {
+    const v = d.marcas[e.EstID], r = d.resumen[e.EstID] || { p: 0, f: 0, pct: 0 };
+    return '<div class="list-group-item d-flex align-items-center gap-2 as-row"><span class="badge text-bg-secondary">' + e.NumLista + '</span>' +
+      '<div class="flex-grow-1" style="min-width:0"><div class="fw-semibold text-truncate">' + esc(e.Nombre) + (e.Etiqueta ? ' <span class="badge text-bg-light border">' + esc(e.Etiqueta) + '</span>' : '') + '</div>' +
+      '<small class="text-body-secondary">' + r.p + ' asist. · ' + r.f + ' faltas · ' + Math.round(r.pct) + '%</small></div>' +
+      '<div class="btn-group"><button class="btn btn-' + (v === 1 ? '' : 'outline-') + 'success" ' + (P.editar ? '' : 'disabled') + ' onclick="marcar(\'' + e.EstID + '\',1)" aria-label="Presente"><i class="bi bi-check-lg"></i><span class="d-none d-sm-inline"> Presente</span></button>' +
+      '<button class="btn btn-' + (v === 0 ? '' : 'outline-') + 'danger" ' + (P.editar ? '' : 'disabled') + ' onclick="marcar(\'' + e.EstID + '\',0)" aria-label="Falta"><i class="bi bi-x-lg"></i><span class="d-none d-sm-inline"> Falta</span></button></div></div>';
+  }).join('') || '<div class="list-group-item text-center text-body-secondary py-4">No hay estudiantes en este grupo.</div>';
+}
+function ajustarResumen(id, ant, nuevo) {
+  const d = S.as.data, r = d.resumen[id] || (d.resumen[id] = { p: 0, f: 0, pct: 0 });
+  if (ant === 1) r.p--; if (ant === 0) r.f--; if (nuevo === 1) r.p++; if (nuevo === 0) r.f++;
+  r.pct = d.total ? Math.min(100, r.p / d.total * 100) : 0;
+}
+function marcar(id, v) {
+  if (!S.as.data.periodo) { toast('Primero define el número de asistencias para evaluación.', 'warning'); return; }
+  const m = S.as.data.marcas, ant = m[id], nuevo = ant === v ? '' : v;
+  ajustarResumen(id, ant, nuevo);
+  if (nuevo === '') delete m[id]; else m[id] = nuevo;
+  S.as.pend[id] = nuevo; S.as.ver++;
+  pintarListaAs(); estadoAs('Guardando…');
+  clearTimeout(S.as.t); S.as.t = setTimeout(vaciarAs, 350);
+}
+function marcarTodos(v) { S.as.data.estudiantes.forEach(e => { if (S.as.data.marcas[e.EstID] !== v) marcar(e.EstID, v === '' ? S.as.data.marcas[e.EstID] : v); }); }
+const estadoAs = t => { const e = $('#asEstado'); if (e) e.innerHTML = t; };
+async function vaciarAs() {
+  clearTimeout(S.as.t);
+  const pend = S.as.pend; S.as.pend = {};
+  const marcas = Object.keys(pend).map(id => ({ EstID: id, valor: pend[id] === '' ? null : pend[id] }));
+  if (!marcas.length) return;
+  try {
+    await llamar('asistencia.guardar', Object.assign(ctxP(), { Fecha: S.as.fecha, marcas }), true);
+    estadoAs('<i class="bi bi-check-circle text-success"></i> Guardado ' + new Date().toLocaleTimeString('es-MX'));
+    S.as.data.fechas = S.as.data.fechas.indexOf(S.as.fecha) < 0 && Object.keys(S.as.data.marcas).length ? S.as.data.fechas.concat(S.as.fecha).sort() : S.as.data.fechas;
+  } catch (e) {
+    Object.keys(pend).forEach(id => { if (!(id in S.as.pend)) S.as.pend[id] = pend[id]; });
+    estadoAs('<i class="bi bi-exclamation-triangle text-danger"></i> No guardado'); toast(e.message, 'danger'); throw e;
+  }
+}
+async function irFecha(f) {
+  if (!f) return;
+  try { await vaciarAs(); } catch (e) { return; }
+  S.as.fecha = f; S.as.ver++; cargarAs(true);
+}
+async function borrarFecha() {
+  if (!await confirmar('Se eliminarán todas las marcas de asistencia del ' + fechaCorta(S.as.fecha) + '. ¿Continuar?')) return;
+  try { await llamar('asistencia.borrarFecha', Object.assign(ctxP(), { Fecha: S.as.fecha })); toast('Sesión eliminada'); S.as.ver++; cargarAs(true); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ============================ ACTIVIDADES Y CALIFICACIONES ============================ */
+MODS.actividades = async () => {
+  if (!S.clases.length) return render(barraCtx());
+  S.ac.pend = {};
+  render(barraCtx() + '<div id="acBody">' + spinner() + '</div>'); bindCtx();
+  const d = S.ac.d = await llamar('actividades.cargar', ctxP());
+  if (!d.per) {
+    $('#acBody').innerHTML = '<div class="alert alert-info"><i class="bi bi-info-circle"></i> Para calificar este parcial primero indica el <strong>número de asistencias para evaluación</strong>.' +
+      (S.perm.asistencia.editar ? '<div class="mt-2"><button class="btn btn-primary" onclick="formPeriodo(null)">Definir ahora</button></div>' : '') + '</div>';
+    return;
+  }
+  pintarAc();
+};
+function pintarAc() {
+  const d = S.ac.d, P = S.perm.actividades, gen = d.acts.filter(a => a.Categoria === 'GENERAL'), lib = d.acts.filter(a => a.Categoria === 'LIBRETA'), cols = gen.concat(lib);
+  const th = a => '<th' + (P.editar ? ' role="button" title="Editar actividad" onclick="formAct(\'' + a.ActID + '\')"' : '') + '>' + esc(a.Nombre) + '</th>';
+  $('#acBody').innerHTML =
+    '<div class="row g-2 mb-3">' +
+    '<div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body py-2"><div class="small text-body-secondary">Asistencias para evaluación</div><div class="fs-4 fw-bold">' + d.total + '</div></div></div></div>' +
+    '<div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body py-2"><div class="small text-body-secondary">Puntos generales (con asistencia)</div><div class="fs-4 fw-bold">' + fx(d.pesoGen) + '</div></div></div></div>' +
+    '<div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body py-2"><div class="small text-body-secondary">Puntos libreta y actividades</div><div class="fs-4 fw-bold">' + fx(d.pesoLib) + '</div></div></div></div>' +
+    '<div class="col-6 col-lg-3 d-flex flex-column gap-1 justify-content-center">' +
+    (P.crear ? '<button class="btn btn-primary btn-sm" onclick="formAct()"><i class="bi bi-plus-lg"></i> Agregar actividad</button>' : '') +
+    (P.crear && !d.acts.length ? '<button class="btn btn-outline-primary btn-sm" onclick="plantilla()">Usar plantilla base</button>' : '') +
+    (S.perm.asistencia.editar ? '<button class="btn btn-outline-secondary btn-sm" onclick="formPeriodo(S.ac.d.per)"><i class="bi bi-sliders"></i> Configurar parcial</button>' : '') + '</div></div>' +
+    '<div class="d-flex justify-content-between align-items-center mb-2"><span class="small text-body-secondary">Toca el nombre de una actividad para editarla. Los cambios se guardan automáticamente.</span><span id="acEstado" class="small text-body-secondary"></span></div>' +
+    '<div class="table-responsive border rounded" style="max-height:72vh"><table id="acTabla" class="table table-sm table-bordered align-middle mb-0 tabla-cal"><thead>' +
+    '<tr><th rowspan="3" class="nm">Estudiante</th><th colspan="' + (1 + gen.length) + '">GENERALES</th><th colspan="' + Math.max(1, lib.length) + '">LIBRETA Y ACTIVIDADES</th><th rowspan="3">Calif. L.</th><th rowspan="3">Calif. general</th><th rowspan="3" style="min-width:210px">Observaciones</th></tr>' +
+    '<tr><th>Asistencia<br><small>(automática)</small></th>' + gen.map(th).join('') + (lib.length ? lib.map(th).join('') : '<th>—</th>') + '</tr>' +
+    '<tr><th>' + fx(d.pesoAsis) + '</th>' + gen.map(a => '<th>' + fx(a.Max) + '</th>').join('') + (lib.length ? lib.map(a => '<th>' + fx(a.Max) + '</th>').join('') : '<th></th>') + '</tr></thead><tbody>' +
+    d.filas.map(f => '<tr data-e="' + f.EstID + '"><td class="nm" title="' + esc(f.Nombre) + '">' + f.NumLista + '. ' + esc(f.Nombre) + (f.Etiqueta ? ' <span class="badge text-bg-secondary">' + esc(f.Etiqueta) + '</span>' : '') + '</td>' +
+      '<td><span class="badge text-bg-info" title="' + f.presentes + ' asistencias de ' + d.total + '">' + Math.round(f.pct) + '% · ' + fx(f.ptsAsis) + ' pts</span></td>' +
+      cols.map(a => '<td><input type="number" inputmode="decimal" min="0" max="' + a.Max + '" step="any" class="form-control form-control-sm calif" data-a="' + a.ActID + '" value="' + esc(f.vals[a.ActID]) + '" ' + (P.editar ? '' : 'disabled') + '></td>').join('') + (lib.length ? '' : '<td></td>') +
+      '<td class="fw-semibold" data-c="L"></td><td class="fw-bold" data-c="G"></td>' +
+      '<td><input type="text" maxlength="300" class="form-control form-control-sm obs" value="' + esc(f.obs) + '" ' + (P.editar ? '' : 'disabled') + '></td></tr>').join('') +
+    '</tbody></table></div>' +
+    '<p class="nota text-body-secondary mt-2">Calif. general = (asistencia + generales + libreta) ÷ 10. Libreta = suma de actividades × puntos de libreta ÷ suma de máximos.</p>';
+  const t = $('#acTabla');
+  t.addEventListener('focusin', e => { if (e.target.classList.contains('calif')) e.target.select(); });
+  t.addEventListener('input', e => {
+    const i = e.target, tr = i.closest('tr'); if (!tr) return;
+    if (i.classList.contains('calif')) {
+      const bad = i.value !== '' && (+i.value < 0 || +i.value > +i.max); i.classList.toggle('is-invalid', bad);
+      recalcFila(tr); if (!bad) encolarAc(tr.dataset.e, i.dataset.a, i.value);
+    } else if (i.classList.contains('obs')) encolarAc(tr.dataset.e, 'OBS', i.value);
+  });
+  $$('#acTabla tbody tr').forEach(recalcFila);
+}
+function recalcFila(tr) {
+  const d = S.ac.d, f = d.filas.find(x => x.EstID === tr.dataset.e); let sg = 0, sl = 0;
+  $$('input.calif', tr).forEach(i => {
+    const a = d.acts.find(x => x.ActID === i.dataset.a); let v = parseFloat(i.value); if (isNaN(v)) v = 0; v = Math.max(0, Math.min(a.Max, v));
+    if (a.Categoria === 'GENERAL') sg += v; else sl += v;
+  });
+  const pl = d.maxLib > 0 ? sl * d.pesoLib / d.maxLib : 0, g = (f.ptsAsis + sg + pl) / 10;
+  $('[data-c=L]', tr).textContent = fx(pl);
+  const c = $('[data-c=G]', tr); c.textContent = f1(g); c.className = 'fw-bold text-' + (g < 6 ? 'danger' : 'success');
+}
+function encolarAc(e, a, v) {
+  S.ac.pend[e + '|' + a] = { EstID: e, ActID: a, Valor: v };
+  const el = $('#acEstado'); if (el) el.textContent = 'Guardando…';
+  clearTimeout(S.ac.t); S.ac.t = setTimeout(() => guardarAc().catch(() => {}), 700);
+}
+async function guardarAc() {
+  clearTimeout(S.ac.t);
+  const items = Object.keys(S.ac.pend).map(k => S.ac.pend[k]); S.ac.pend = {};
+  if (!items.length) return;
+  try {
+    await llamar('actividades.guardarCalif', Object.assign(ctxP(), { items }), true);
+    const el = $('#acEstado'); if (el) el.innerHTML = '<i class="bi bi-check-circle text-success"></i> Guardado ' + new Date().toLocaleTimeString('es-MX');
+  } catch (e) {
+    items.forEach(it => { const k = it.EstID + '|' + it.ActID; if (!(k in S.ac.pend)) S.ac.pend[k] = it; });
+    const el = $('#acEstado'); if (el) el.innerHTML = '<i class="bi bi-exclamation-triangle text-danger"></i> No guardado';
+    toast(e.message, 'danger'); throw e;
+  }
+}
+function formAct(id) {
+  const a = id ? S.ac.d.acts.find(x => x.ActID === id) : { Categoria: 'GENERAL', Max: 10 };
+  modal({ titulo: id ? 'Editar actividad' : 'Nueva actividad',
+    cuerpo: fCampo('f_n', 'Nombre', a.Nombre) +
+      fSel('f_c', 'Tipo', [['GENERAL', 'General (participación, proyecto, examen…)'], ['LIBRETA', 'Libreta y actividades']], a.Categoria) +
+      fCampo('f_m', 'Valor máximo', a.Max, 'number', 'min="1" max="100" step="any"') +
+      '<div class="form-text mb-2"><strong>General:</strong> el máximo son los puntos que aporta al parcial (de 100). <strong>Libreta:</strong> cada actividad se califica sobre su máximo (normalmente 10) y todas juntas aportan los puntos restantes hasta 100.</div>' +
+      (id && S.perm.actividades.eliminar ? '<button class="btn btn-outline-danger btn-sm" type="button" onclick="delAct(\'' + id + '\')"><i class="bi bi-trash"></i> Eliminar actividad</button>' : ''),
+    onOk: async () => { await vaciarTodo(); await llamar('actividades.guardarAct', Object.assign(ctxP(), { ActID: id, Nombre: val('f_n'), Categoria: val('f_c'), Max: val('f_m') })); toast('Actividad guardada'); ir('actividades'); } });
+}
+async function delAct(id) {
+  cerrarMdl(); await new Promise(r => setTimeout(r, 400));
+  if (!await confirmar('Se eliminarán la actividad y todas las calificaciones capturadas en ella. ¿Continuar?')) return;
+  try { await llamar('actividades.eliminarAct', Object.assign(ctxP(), { ActID: id })); toast('Actividad eliminada'); ir('actividades'); } catch (e) { toast(e.message, 'danger'); }
+}
+const cerrarMdl = () => { if (mdl) mdl.hide(); };
+async function plantilla() { try { await llamar('actividades.plantilla', ctxP()); toast('Plantilla aplicada'); ir('actividades'); } catch (e) { toast(e.message, 'danger'); } }
+
+/* ============================ REPORTES ============================ */
+MODS.reportes = async () => {
+  if (!S.clases.length) return render(barraCtx());
+  render('<h2 class="h4 mb-3"><i class="bi bi-file-earmark-text"></i> Reportes</h2>' + barraCtx() +
+    '<div class="card mb-3"><div class="card-body"><div class="row g-2 align-items-end"><div class="col-12 col-md-5"><label class="form-label small mb-0" for="rp_t">Tipo de reporte</label>' +
+    '<select id="rp_t" class="form-select"><option value="formativa">Evaluación formativa (parcial)</option><option value="final">Evaluación final (ciclo completo)</option><option value="asistencia">Lista de asistencia (parcial)</option></select></div>' +
+    '<div class="col-12 col-md-7 d-flex flex-wrap gap-2"><button class="btn btn-primary" onclick="generarReporte()"><i class="bi bi-eye"></i> Generar</button>' +
+    '<button class="btn btn-outline-primary rp-acc" onclick="imprimirReporte()" disabled><i class="bi bi-printer"></i> Imprimir / PDF</button>' +
+    '<button class="btn btn-outline-success rp-acc" onclick="descargarPdf()" disabled><i class="bi bi-file-earmark-pdf"></i> Descargar PDF</button></div></div></div></div>' +
+    '<div id="rpOut"><div class="text-center text-body-secondary py-5">Elige el tipo de reporte y pulsa “Generar”.</div></div>');
+  bindCtx(); $('#rp_t').value = S.rp.tipo; $('#rp_t').onchange = e => S.rp.tipo = e.target.value;
+};
+async function generarReporte() {
+  const R = await llamar('reportes.datos', Object.assign(ctxP(), { tipo: S.rp.tipo }));
+  S.rp.html = reporteHtml(R); S.rp.nombre = 'reporte_' + R.tipo + '_' + R.clase.Grado + R.clase.Grupo;
+  $('#rpOut').innerHTML = '<div class="rep-wrap"><iframe id="rpFrame" title="Vista previa del reporte" style="width:100%;min-width:1000px;border:0;height:600px"></iframe></div>';
+  const fr = $('#rpFrame'); fr.onload = () => { try { fr.style.height = (fr.contentDocument.documentElement.scrollHeight + 20) + 'px'; } catch (e) {} };
+  fr.srcdoc = S.rp.html; $$('.rp-acc').forEach(b => b.disabled = false);
+}
+function imprimirReporte() { const w = $('#rpFrame').contentWindow; w.focus(); w.print(); }
+async function descargarPdf() {
+  try {
+    const r = await llamar('reportes.pdf', { html: S.rp.html, nombre: S.rp.nombre });
+    const bin = atob(r.b64), arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' })); a.download = r.nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ---------- Plantillas HTML de los reportes (diseño del formato del Excel) ---------- */
+const CSS_REP = '<style>@page{size:letter landscape;margin:9mm}body{font-family:Arial,Helvetica,sans-serif;font-size:10px;color:#000;margin:8px;background:#fff}' +
+  'table{border-collapse:collapse;width:100%}th,td{border:1px solid #444;padding:2px 3px}th{background:#0d6efd;color:#fff;text-align:center;font-size:9px}' +
+  'td{text-align:center}td.l{text-align:left;white-space:nowrap}.sin td,.sin{border:0}.lb{font-weight:bold;text-align:left;background:#e7f1ff;white-space:nowrap}.vl{text-align:left}' +
+  '.rep{color:#dc3545;font-weight:bold}.max th{background:#cfe2ff;color:#000}.tit{font-size:13px;font-weight:bold;letter-spacing:1px;margin-top:4px}.firma td{border:0;padding-top:34px;text-align:center}' +
+  '.firma span{display:inline-block;border-top:1px solid #000;min-width:200px;padding-top:2px}.z{background:#f1f3f5}</style>';
+function encabezadoRep(R, titulo, mes) {
+  const c = R.clase, g = R.cfg;
+  return '<table class="sin" style="margin-bottom:6px"><tr><td style="width:100px;text-align:left">' + (R.logo ? '<img src="' + R.logo + '" style="height:72px;max-width:100px" alt="">' : '') + '</td>' +
+    '<td><div style="font-size:15px;font-weight:bold">' + esc(g.INSTITUCION) + '</div><div>' + esc(g.ENCABEZADO2) + '</div>' + (g.CCT ? '<div>C.C.T. ' + esc(g.CCT) + '</div>' : '') + '<div class="tit">' + titulo + '</div></td><td style="width:100px"></td></tr></table>' +
+    '<table style="margin-bottom:6px"><tr><td class="lb">Asignatura:</td><td class="vl">' + esc(c.Asignatura) + '</td><td class="lb">Grado:</td><td class="vl">' + esc(c.Grado) + '</td><td class="lb">Trimestre:</td><td class="vl">' + (R.tipo === 'final' ? 'Todos' : TRIM[R.t - 1]) + '</td><td class="lb">Mes:</td><td class="vl">' + esc(mes || '') + '</td></tr>' +
+    '<tr><td class="lb">Nombre del docente:</td><td class="vl">' + esc(c.Docente) + '</td><td class="lb">Grupo:</td><td class="vl">' + esc(c.Grupo) + '</td><td class="lb">Parcial:</td><td class="vl">' + (R.tipo === 'final' ? 'Todos' : PARC[R.pa - 1]) + '</td><td class="lb">Ciclo:</td><td class="vl">' + esc(c.Ciclo) + '</td></tr></table>';
+}
+const firmasRep = R => '<table class="firma"><tr><td><span>' + esc(R.clase.Docente) + '<br>Docente</span></td><td><span>' + esc(R.cfg.DIRECTOR || '') + '<br>Dirección</span></td></tr></table>';
+const celCal = v => v == null ? '<td class="z"></td>' : '<td class="' + (v < 6 ? 'rep' : '') + '">' + (Number.isInteger(v) ? v : f1(v)) + '</td>';
+const docRep = (cuerpo, tit) => '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + esc(tit) + '</title>' + CSS_REP + '</head><body>' + cuerpo + '</body></html>';
+
+function reporteHtml(R) { return R.tipo === 'final' ? repFinal(R) : R.tipo === 'asistencia' ? repAsistencia(R) : repFormativa(R); }
+
+function repFormativa(R) {
+  const P = R.P, gen = P.acts.filter(a => a.Categoria === 'GENERAL'), lib = P.acts.filter(a => a.Categoria === 'LIBRETA');
+  const h = encabezadoRep(R, 'EVALUACIÓN FORMATIVA', P.per && P.per.Mes) +
+    '<table><thead><tr><th rowspan="3" style="width:28px">NO.</th><th rowspan="3">NOMBRE DEL ESTUDIANTE</th><th colspan="' + (1 + gen.length) + '">GENERALES (' + fx(P.pesoGen) + ')</th><th colspan="' + Math.max(1, lib.length) + '">LIBRETA Y ACTIVIDADES (' + fx(P.pesoLib) + ')</th>' +
+    '<th rowspan="3">CALIF. L.</th><th rowspan="3">CALIF. GRAL.</th><th rowspan="3">OBSERVACIONES</th></tr>' +
+    '<tr><th>ASISTENCIA</th>' + gen.map(a => '<th>' + esc(a.Nombre).toUpperCase() + '</th>').join('') + (lib.length ? lib.map(a => '<th>' + esc(a.Nombre) + '</th>').join('') : '<th>—</th>') + '</tr>' +
+    '<tr class="max"><th>' + fx(P.pesoAsis) + '</th>' + gen.map(a => '<th>' + fx(a.Max) + '</th>').join('') + (lib.length ? lib.map(a => '<th>' + fx(a.Max) + '</th>').join('') : '<th></th>') + '</tr></thead><tbody>' +
+    P.filas.map(f => '<tr><td>' + f.NumLista + '</td><td class="l">' + esc(f.Nombre) + (f.Etiqueta ? ' (' + esc(f.Etiqueta) + ')' : '') + '</td><td>' + fx(f.ptsAsis) + '</td>' +
+      gen.map(a => '<td>' + (f.vals[a.ActID] === '' ? '' : fx(f.vals[a.ActID])) + '</td>').join('') +
+      (lib.length ? lib.map(a => '<td>' + (f.vals[a.ActID] === '' ? '' : fx(f.vals[a.ActID])) + '</td>').join('') : '<td></td>') +
+      '<td>' + fx(f.califL) + '</td>' + celCal(f.gral) + '<td class="l">' + esc(f.obs) + '</td></tr>').join('') + '</tbody></table>' + firmasRep(R);
+  return docRep(h, 'Evaluación formativa');
+}
+
+function repAsistencia(R) {
+  const P = R.P, fe = P.fechas;
+  const h = encabezadoRep(R, 'LISTA DE ASISTENCIA', P.per && P.per.Mes) +
+    '<div style="margin-bottom:4px"><strong>Total de días para evaluación:</strong> ' + P.total + '</div>' +
+    '<table style="font-size:9px"><thead><tr><th rowspan="2" style="width:28px">NO.</th><th rowspan="2">NOMBRE DEL ESTUDIANTE</th>' +
+    fe.map(f => '<th>' + fechaDe(f).toLocaleDateString('es-MX', { weekday: 'short' }).slice(0, 3).toUpperCase() + '</th>').join('') +
+    '<th rowspan="2">T. ASIST.</th><th rowspan="2">T. INASIST.</th><th rowspan="2">CALIF.</th></tr><tr class="max">' +
+    fe.map(f => '<th>' + f.slice(8) + '/' + f.slice(5, 7) + '</th>').join('') + '</tr></thead><tbody>' +
+    P.filas.map(f => '<tr><td>' + f.NumLista + '</td><td class="l">' + esc(f.Nombre) + (f.Etiqueta ? ' (' + esc(f.Etiqueta) + ')' : '') + '</td>' +
+      fe.map(d => { const v = P.am[f.EstID + '|' + d]; return '<td class="' + (v === 0 ? 'rep' : '') + '">' + (v === undefined ? '' : v) + '</td>'; }).join('') +
+      '<td>' + f.presentes + '</td><td>' + f.faltas + '</td><td>' + f.asis10 + '</td></tr>').join('') + '</tbody></table>' + firmasRep(R);
+  return docRep(h, 'Lista de asistencia');
+}
+
+function repFinal(R) {
+  const h = encabezadoRep(R, 'EVALUACIÓN FINAL', '') +
+    '<table><thead><tr><th rowspan="3" style="width:28px">NO.</th><th rowspan="3">NOMBRE DEL ESTUDIANTE</th>' +
+    TRIM.map(t => '<th colspan="3">' + t.toUpperCase() + ' TRIMESTRE</th>').join('') + '<th rowspan="3">TOTAL PUNTOS</th><th rowspan="3">CALIFICACIÓN FINAL</th><th rowspan="3">OBSERVACIONES</th></tr>' +
+    '<tr>' + TRIM.map(() => '<th>1ER PARCIAL</th><th>2DO PARCIAL</th><th>CALIF.</th>').join('') + '</tr><tr class="max">' + TRIM.map(() => '<th>10</th><th>10</th><th>10</th>').join('') + '</tr></thead><tbody>' +
+    R.ests.map(e => { const a = R.anual[e.EstID];
+      return '<tr><td>' + e.NumLista + '</td><td class="l">' + esc(e.Nombre) + '</td>' + a.trim.map(t => celCal(t.p[0]) + celCal(t.p[1]) + celCal(t.cal)).join('') +
+        '<td>' + (a.n ? a.total : '') + '</td>' + celCal(a.final) + '<td class="l">' + esc(e.Etiqueta || '') + (a.provisional && a.n ? ' <i>(parcial)</i>' : '') + '</td></tr>'; }).join('') +
+    '</tbody></table><div style="margin-top:4px;font-size:9px">Calificación del trimestre = promedio de parciales redondeado. Calificación final = suma de trimestres ÷ 3. “(parcial)” indica ciclo en curso.</div>' + firmasRep(R);
+  return docRep(h, 'Evaluación final');
+}
+
+/* ============================ USUARIOS ============================ */
+MODS.usuarios = async () => {
+  const d = S.us = await llamar('usuarios.listar'), P = S.perm.usuarios, nom = {}; d.docentes.forEach(x => nom[x.DocenteID] = x.Nombre);
+  render('<h2 class="h4 mb-3"><i class="bi bi-person-gear"></i> Usuarios</h2>' + (P.crear ? '<button class="btn btn-primary mb-3" onclick="formUsuario()"><i class="bi bi-plus-lg"></i> Nuevo usuario</button>' : '') +
+    '<div class="table-responsive card"><table class="table table-hover align-middle mb-0"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th class="d-none d-md-table-cell">Docente vinculado</th><th>Estado</th><th></th></tr></thead><tbody>' +
+    d.usuarios.map(u => '<tr><td><code>' + esc(u.Usuario) + '</code></td><td>' + esc(u.Nombre) + '</td><td><span class="badge text-bg-' + (u.Rol === 'ADMIN' ? 'danger' : 'primary') + '">' + esc(u.Rol) + '</span></td><td class="d-none d-md-table-cell">' + esc(u.DocenteID === '*' ? 'Todos' : nom[u.DocenteID] || '—') + '</td><td>' + badgeAct(u.Activo) + '</td><td class="text-end text-nowrap">' +
+      (P.editar ? btnIco('primary', 'pencil', "formUsuario('" + esc(u.Usuario) + "')", 'Editar') : '') + ' ' + (P.eliminar ? btnIco('danger', 'trash', "delUsuario('" + esc(u.Usuario) + "')", 'Eliminar') : '') + '</td></tr>').join('') + '</tbody></table></div>');
+};
+function formUsuario(id) {
+  const d = S.us, u = id ? d.usuarios.find(x => x.Usuario === id) : { Activo: true, Rol: 'DOCENTE' };
+  modal({ titulo: id ? 'Editar usuario' : 'Nuevo usuario',
+    cuerpo: fCampo('f_u', 'Usuario', u.Usuario, 'text', id ? 'readonly' : 'autocapitalize="none"') + fCampo('f_n', 'Nombre', u.Nombre) +
+      fSel('f_r', 'Rol', d.roles.map(r => [r, r]), u.Rol) + fSel('f_d', 'Docente vinculado (define qué grupos ve)', [['', '— Ninguno —']].concat(d.docentes.map(x => [x.DocenteID, x.Nombre])), u.DocenteID) +
+      fCampo('f_p', id ? 'Nueva contraseña (dejar vacío para no cambiar)' : 'Contraseña inicial (mínimo 8 caracteres)', '', 'password', 'autocomplete="new-password"') +
+      fSwitch('f_a', 'Activo', u.Activo) + '<div class="form-text">Con contraseña nueva, el usuario deberá cambiarla en su primer acceso. El rol ADMIN ve todos los grupos.</div>',
+    onOk: async () => { await llamar('usuarios.guardar', { nuevo: !id, Usuario: val('f_u'), Nombre: val('f_n'), Rol: val('f_r'), DocenteID: val('f_d'), Password: $('#f_p').value, Activo: $('#f_a').checked }); toast('Usuario guardado'); MODS.usuarios(); } });
+}
+async function delUsuario(id) {
+  if (!await confirmar('¿Eliminar al usuario "' + id + '"?')) return;
+  try { await llamar('usuarios.eliminar', { Usuario: id }); toast('Usuario eliminado'); MODS.usuarios(); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ============================ PERMISOS ============================ */
+MODS.permisos = async () => {
+  const d = S.pm = await llamar('permisos.cargar'); if (!S.pm.rol || d.roles.indexOf(S.pm.rol) < 0) S.pm.rol = d.roles.find(r => r !== 'ADMIN') || 'ADMIN';
+  pintarPermisos();
+};
+function pintarPermisos() {
+  const d = S.pm, P = S.perm.permisos, rol = d.rol, adm = rol === 'ADMIN', m = d.matriz[rol], dis = (adm || !P.editar) ? 'disabled' : '';
+  render('<h2 class="h4 mb-3"><i class="bi bi-shield-lock"></i> Gestión de permisos</h2><div class="card mb-3"><div class="card-body"><div class="row g-2 align-items-end">' +
+    '<div class="col-12 col-md-4"><label class="form-label small mb-0" for="pm_r">Rol</label><select id="pm_r" class="form-select">' + d.roles.map(r => '<option' + (r === rol ? ' selected' : '') + '>' + esc(r) + '</option>').join('') + '</select></div>' +
+    '<div class="col-12 col-md-8 d-flex flex-wrap gap-2">' + (P.crear ? '<button class="btn btn-outline-primary" onclick="nuevoRol()"><i class="bi bi-plus-lg"></i> Nuevo rol</button>' : '') +
+    (P.eliminar && !adm ? '<button class="btn btn-outline-danger" onclick="delRol()"><i class="bi bi-trash"></i> Eliminar rol</button>' : '') +
+    (!adm && P.editar ? '<button class="btn btn-primary" onclick="guardarPermisos()"><i class="bi bi-save"></i> Guardar permisos</button>' : '') + '</div></div></div></div>' +
+    (adm ? '<div class="alert alert-info">El rol <strong>ADMIN</strong> siempre tiene acceso total y no se puede modificar.</div>' : '') +
+    '<div class="table-responsive card"><table class="table align-middle mb-0 text-center"><thead><tr><th class="text-start">Módulo</th><th>Ver</th><th>Crear</th><th>Editar</th><th>Eliminar</th></tr></thead><tbody>' +
+    Object.keys(d.modulos).map(k => '<tr><td class="text-start">' + esc(d.modulos[k]) + '</td>' + ['ver', 'crear', 'editar', 'eliminar'].map(a =>
+      '<td><input class="form-check-input pm-chk" type="checkbox" data-m="' + k + '" data-a="' + a + '" ' + (m[k][a] ? 'checked' : '') + ' ' + dis + ' aria-label="' + a + '"></td>').join('') + '</tr>').join('') + '</tbody></table></div>' +
+    '<p class="nota text-body-secondary mt-2">Sin “Ver” el módulo no aparece en el menú. Los docentes solo acceden a los grupos de su docente vinculado.</p>');
+  $('#pm_r').onchange = e => { S.pm.rol = e.target.value; pintarPermisos(); };
+  $$('.pm-chk').forEach(c => c.onchange = () => { const mm = S.pm.matriz[S.pm.rol]; mm[c.dataset.m][c.dataset.a] = c.checked; if (c.dataset.a !== 'ver' && c.checked) { mm[c.dataset.m].ver = true; } if (c.dataset.a === 'ver' && !c.checked) { ['crear', 'editar', 'eliminar'].forEach(a => mm[c.dataset.m][a] = false); } pintarPermisos(); });
+}
+async function guardarPermisos() { try { await llamar('permisos.guardar', { rol: S.pm.rol, matriz: S.pm.matriz[S.pm.rol] }); toast('Permisos guardados'); } catch (e) { toast(e.message, 'danger'); } }
+function nuevoRol() {
+  modal({ titulo: 'Nuevo rol', cuerpo: fCampo('f_r', 'Nombre del rol (ej. COORDINADOR)', ''), ok: 'Crear', onOk: async () => {
+    const r = val('f_r').toUpperCase(); const mm = {}; Object.keys(S.pm.modulos).forEach(k => mm[k] = { ver: k === 'reportes', crear: false, editar: false, eliminar: false });
+    await llamar('permisos.guardar', { rol: r, matriz: mm }); toast('Rol creado'); S.pm.rol = r; MODS.permisos();
+  } });
+}
+async function delRol() {
+  if (!await confirmar('¿Eliminar el rol ' + S.pm.rol + '?')) return;
+  try { await llamar('permisos.eliminarRol', { rol: S.pm.rol }); toast('Rol eliminado'); MODS.permisos(); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ============================ CONFIGURACIÓN (encabezado y logotipo) ============================ */
+MODS.config = async () => {
+  const d = await llamar('config.cargar'), c = d.config, P = S.perm.config, dis = P.editar ? '' : 'disabled';
+  render('<h2 class="h4 mb-3"><i class="bi bi-gear"></i> Encabezado y logotipo de los reportes</h2><div class="row g-3"><div class="col-12 col-lg-7"><div class="card"><div class="card-body">' +
+    fCampo('c_i', 'Nombre de la institución', c.INSTITUCION, 'text', dis) + fCampo('c_e', 'Encabezado secundario (secretaría, subsistema…)', c.ENCABEZADO2, 'text', dis) +
+    '<div class="row"><div class="col-6">' + fCampo('c_k', 'C.C.T.', c.CCT, 'text', dis) + '</div><div class="col-6">' + fCampo('c_c', 'Ciclo escolar', c.CICLO, 'text', dis) + '</div></div>' +
+    fCampo('c_d', 'Nombre de quien firma como Dirección', c.DIRECTOR, 'text', dis) + (P.editar ? '<button class="btn btn-primary" onclick="guardarConfig()"><i class="bi bi-save"></i> Guardar</button>' : '') +
+    '</div></div></div><div class="col-12 col-lg-5"><div class="card"><div class="card-body text-center"><h3 class="h6">Logotipo</h3>' +
+    '<div class="border rounded p-3 mb-3 bg-white"><img id="cfgLogo" class="logo-img" alt="Sin logotipo" ' + (d.logo ? 'src="' + d.logo + '"' : 'style="display:none"') + '>' + (d.logo ? '' : '<div id="cfgSin" class="text-body-secondary small">Sin logotipo</div>') + '</div>' +
+    (P.editar ? '<input type="file" id="cfgFile" accept="image/png,image/jpeg" class="form-control"><div class="form-text">PNG o JPG. Se ajusta automáticamente a un tamaño ligero.</div>' : '') +
+    '</div></div></div></div>');
+  const fi = $('#cfgFile'); if (fi) fi.onchange = subirLogo;
+};
+async function guardarConfig() {
+  try { await llamar('config.guardar', { INSTITUCION: val('c_i'), ENCABEZADO2: val('c_e'), CCT: val('c_k'), CICLO: val('c_c'), DIRECTOR: val('c_d') });
+    S.cfg = { INSTITUCION: val('c_i'), ENCABEZADO2: val('c_e'), CCT: val('c_k'), CICLO: val('c_c'), DIRECTOR: val('c_d') }; $('#navInst').textContent = S.cfg.INSTITUCION; toast('Configuración guardada'); } catch (e) { toast(e.message, 'danger'); }
+}
+function subirLogo(ev) {
+  const f = ev.target.files[0]; if (!f) return;
+  const img = new Image(), url = URL.createObjectURL(f);
+  img.onload = async () => {
+    const k = Math.min(1, 300 / Math.max(img.width, img.height)), cv = document.createElement('canvas');
+    cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+    const uri = cv.toDataURL('image/png');
+    try { await llamar('config.logo', { dataUri: uri }); S.logo = uri; const i = $('#cfgLogo'); i.src = uri; i.style.display = 'inline-block'; const s = $('#cfgSin'); if (s) s.remove(); toast('Logotipo actualizado'); }
+    catch (e) { toast(e.message, 'danger'); }
+  };
+  img.onerror = () => toast('No se pudo leer la imagen.', 'danger'); img.src = url;
+}
+
+/* ============================ MÓDULO INVITADO ============================ */
+async function consultar(ev) {
+  ev.preventDefault(); const err = $('#gErr'); err.classList.add('d-none');
+  try {
+    const r = await pub('consultaInvitado', $('#gm').value, $('#gc').value);
+    if (!r.ok) { err.textContent = r.error; err.classList.remove('d-none'); return; }
+    pintarInvitado(r.data); $('#gc').value = '';
+    $('#viewLogin').style.display = 'none'; $('#viewGuest').style.display = 'block'; window.scrollTo(0, 0);
+  } catch (e) { err.textContent = e.message; err.classList.remove('d-none'); }
+}
+function salirInvitado() { $('#viewGuest').style.display = 'none'; $('#viewLogin').style.display = 'flex'; $('#guestBody').innerHTML = ''; }
+function pintarInvitado(d) {
+  const nf = v => v == null ? '<span class="text-body-secondary">—</span>' : '<span class="fw-semibold text-' + (v < 6 ? 'danger' : 'body') + '">' + (Number.isInteger(v) ? v : f1(v)) + '</span>';
+  const e = d.estudiante;
+  $('#guestBody').innerHTML =
+    '<div class="text-center mb-3">' + (d.logo ? '<img src="' + d.logo + '" class="logo-img mb-2" alt="Logotipo"><br>' : '') + '<h1 class="h4 mb-0">' + esc(d.institucion) + '</h1><div class="text-body-secondary">' + esc(d.encabezado2) + (d.cct ? ' · C.C.T. ' + esc(d.cct) : '') + '</div>' +
+    '<div class="fw-semibold mt-2">CONSULTA DE CALIFICACIONES</div></div>' +
+    '<div class="card mb-3 border-primary"><div class="card-body"><div class="row g-2"><div class="col-12 col-md-6"><div class="small text-body-secondary">Estudiante</div><div class="fs-5 fw-bold">' + esc(e.nombre) + '</div></div>' +
+    '<div class="col-6 col-md-3"><div class="small text-body-secondary">Grado y grupo</div><div class="fw-semibold">' + esc(e.grado) + ' ' + esc(e.grupo) + '</div></div><div class="col-6 col-md-3"><div class="small text-body-secondary">Matrícula</div><div class="fw-semibold">' + esc(e.matricula) + '</div></div></div></div></div>' +
+    (d.materias.map(m => '<div class="card mb-3 shadow-sm"><div class="card-header d-flex flex-wrap justify-content-between gap-2"><strong>' + esc(m.asignatura) + '</strong><span class="small text-body-secondary">' + esc(m.docente) + (m.ciclo ? ' · Ciclo ' + esc(m.ciclo) : '') + '</span></div>' +
+      '<div class="table-responsive"><table class="table table-sm align-middle text-center mb-0"><thead><tr><th class="text-start">Trimestre</th><th>1er parcial</th><th>2do parcial</th><th>Calificación del trimestre</th></tr></thead><tbody>' +
+      m.trim.map((t, i) => '<tr><td class="text-start">' + TRIM[i] + ' trimestre</td><td>' + nf(t.p[0]) + '</td><td>' + nf(t.p[1]) + '</td><td>' + (t.cal == null ? nf(null) : '<span class="badge fs-6 text-bg-' + colorCal(t.cal) + '">' + t.cal + '</span>') + '</td></tr>').join('') +
+      '</tbody><tfoot><tr class="table-active"><td class="text-start fw-bold" colspan="2">Total de puntos: ' + (m.final == null ? '—' : m.total) + '</td><td class="text-end fw-bold" colspan="2">Calificación final: ' + (m.final == null ? '—' : '<span class="badge fs-6 text-bg-' + colorCal(m.final) + '">' + f1(m.final) + '</span>') + (m.provisional && m.final != null ? ' <small class="text-body-secondary">(parcial, ciclo en curso)</small>' : '') + '</td></tr></tfoot></table></div></div>').join('') ||
+      '<div class="alert alert-info">Aún no hay asignaturas registradas para este grupo.</div>');
+}
+</script>
+</body>
+</html>
