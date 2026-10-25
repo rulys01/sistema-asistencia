@@ -1,0 +1,101 @@
+<script>
+/* ============================================================================
+ *  ESTUDIANTES: lista, tutores, importación, promoción de ciclo y credenciales con QR
+ * ========================================================================== */
+MODS.estudiantes = async () => {
+  const pares = Array.from(new Map(S.clases.map(c => [c.Grado + '|' + c.Grupo, c])).values());
+  if (!pares.length) return render('<div class="alert alert-warning">Primero registra una asignatura con su grado y grupo en <strong>Docentes y asignaturas</strong>.</div>');
+  if (!pares.some(c => c.Grado + '|' + c.Grupo === S.es.par)) S.es.par = pares[0].Grado + '|' + pares[0].Grupo;
+  const P = S.perm.estudiantes;
+  render('<h2 class="h4 mb-3"><i class="bi bi-people"></i> Estudiantes</h2><div class="card mb-3"><div class="card-body"><div class="row g-2 align-items-end">' +
+    '<div class="col-12 col-md-3"><label class="form-label small mb-0" for="es_par">Grado y grupo</label><select id="es_par" class="form-select">' +
+    pares.map(c => '<option value="' + esc(c.Grado + '|' + c.Grupo) + '"' + (c.Grado + '|' + c.Grupo === S.es.par ? ' selected' : '') + '>' + esc(c.Grado + ' ' + c.Grupo) + '</option>').join('') + '</select></div>' +
+    '<div class="col-12 col-md-3"><label class="form-label small mb-0" for="es_q">Buscar</label><input id="es_q" class="form-control" placeholder="Nombre o matrícula"></div>' +
+    '<div class="col-12 col-md-6 d-flex flex-wrap gap-2">' +
+    (P.crear ? '<button class="btn btn-primary" onclick="formEst()"><i class="bi bi-plus-lg"></i> Nuevo</button><button class="btn btn-outline-primary" onclick="formImportar()"><i class="bi bi-clipboard-plus"></i> Importar lista</button>' : '') +
+    (P.editar ? '<button class="btn btn-outline-secondary" onclick="ordenarEst()"><i class="bi bi-sort-alpha-down"></i> Ordenar A-Z</button><button class="btn btn-outline-warning" onclick="formPromover()"><i class="bi bi-arrow-up-right-circle"></i> Promover grupo</button>' : '') +
+    '<button class="btn btn-outline-dark" onclick="credenciales()"><i class="bi bi-qr-code"></i> Credenciales QR</button>' +
+    '</div></div></div></div><div id="esLista">' + spinner() + '</div>');
+  $('#es_par').onchange = () => { S.es.par = $('#es_par').value; cargarEs(); };
+  $('#es_q').oninput = pintarEs;
+  await cargarEs();
+};
+async function cargarEs() { const [g, gr] = S.es.par.split('|'); S.es.lista = await llamar('estudiantes.listar', { Grado: g, Grupo: gr }); pintarEs(); }
+function pintarEs() {
+  const q = ($('#es_q').value || '').toLowerCase(), P = S.perm.estudiantes;
+  const l = S.es.lista.filter(e => !q || (e.Nombre + ' ' + e.Matricula).toLowerCase().includes(q));
+  $('#esLista').innerHTML = '<div class="table-responsive card"><table class="table table-hover align-middle mb-0"><thead><tr><th>No.</th><th>Nombre</th><th>Matrícula</th><th>Clave de consulta</th><th class="d-none d-lg-table-cell">Tutor</th><th></th></tr></thead><tbody>' +
+    (l.map(e => '<tr class="' + (e.Activo ? '' : 'text-body-secondary') + '"><td>' + e.NumLista + '</td><td>' + esc(e.Nombre) + (e.Etiqueta ? ' <span class="badge text-bg-light border">' + esc(e.Etiqueta) + '</span>' : '') + (e.Activo ? '' : ' <span class="badge text-bg-secondary">Baja</span>') + '</td><td>' + esc(e.Matricula) + '</td><td><code>' + esc(e.Clave) + '</code></td>' +
+      '<td class="d-none d-lg-table-cell small">' + (e.Tutor || e.CorreoTutor ? esc(e.Tutor) + (e.CorreoTutor ? '<br><span class="text-body-secondary">' + esc(e.CorreoTutor) + '</span>' : '') : '<span class="text-body-secondary">—</span>') + '</td><td class="text-end text-nowrap">' +
+      (S.perm.seguimiento && S.perm.seguimiento.ver ? btnIco('secondary', 'journal-text', "abrirSeguimiento('" + e.EstID + "')", 'Seguimiento') + ' ' : '') +
+      (P.editar ? btnIco('primary', 'pencil', "formEst('" + e.EstID + "')", 'Editar') : '') + ' ' + (P.eliminar ? btnIco('danger', 'trash', "delEst('" + e.EstID + "')", 'Eliminar') : '') + '</td></tr>').join('') ||
+      '<tr><td colspan="6" class="text-center text-body-secondary py-4">Sin estudiantes. Usa “Nuevo” o “Importar lista”.</td></tr>') + '</tbody></table></div>' +
+    '<p class="nota text-body-secondary mt-2 mb-0"><i class="bi bi-info-circle"></i> La matrícula y la clave son los datos que el estudiante o tutor usa en la consulta pública. Los eliminados van a la Papelera.</p>';
+}
+function formEst(id) {
+  const e = id ? S.es.lista.find(x => x.EstID === id) : { Activo: true }, [g, gr] = S.es.par.split('|');
+  modal({ titulo: id ? 'Editar estudiante' : 'Nuevo estudiante', size: 'modal-lg',
+    cuerpo: fCampo('f_n', 'Nombre (apellidos y nombre)', e.Nombre) + '<div class="row"><div class="col-7">' + fCampo('f_m', 'Matrícula / registro', e.Matricula, 'text', 'placeholder="Automática si se deja vacía"') +
+      '</div><div class="col-5">' + fCampo('f_u', 'No. de lista', e.NumLista || '', 'number', 'min="1"') + '</div></div>' +
+      fCampo('f_e', 'Etiqueta u observación (ej. N.I.)', e.Etiqueta) + fSwitch('f_a', 'Activo (desmarcar = baja)', e.Activo) +
+      '<hr><div class="fw-semibold mb-2"><i class="bi bi-person-heart"></i> Tutor (para notificaciones por correo)</div>' +
+      '<div class="row"><div class="col-12 col-md-4">' + fCampo('f_tn', 'Nombre del tutor', e.Tutor) + '</div><div class="col-12 col-md-5">' + fCampo('f_tc', 'Correo del tutor', e.CorreoTutor, 'email') + '</div><div class="col-12 col-md-3">' + fCampo('f_tt', 'Teléfono', e.TelTutor, 'tel') + '</div></div>' +
+      (id ? '<div class="small">Clave de consulta: <code>' + esc(e.Clave) + '</code> <button class="btn btn-sm btn-outline-secondary ms-2" type="button" onclick="regenClave(\'' + id + '\')">Generar nueva</button></div>' : ''),
+    onOk: async () => { await llamar('estudiantes.guardar', { EstID: id, Nombre: val('f_n'), Matricula: val('f_m'), NumLista: val('f_u'), Etiqueta: val('f_e'), Activo: $('#f_a').checked, Grado: g, Grupo: gr,
+      Tutor: val('f_tn'), CorreoTutor: val('f_tc'), TelTutor: val('f_tt') }); toast('Estudiante guardado'); cargarEs(); } });
+}
+async function regenClave(id) {
+  cerrarMdl(); await new Promise(r => setTimeout(r, 400));
+  if (!await confirmar('La clave anterior dejará de funcionar. ¿Generar una nueva?', 'Generar')) return;
+  try { const c = await llamar('estudiantes.clave', { EstID: id }); toast('Nueva clave: ' + c); cargarEs(); } catch (e) { toast(e.message, 'danger'); }
+}
+async function delEst(id) {
+  if (!await confirmar('El estudiante se enviará a la papelera (conserva su asistencia y calificaciones y puede restaurarse). ¿Continuar?')) return;
+  try { await llamar('estudiantes.eliminar', { EstID: id }); toast('Estudiante enviado a la papelera'); cargarEs(); } catch (e) { toast(e.message, 'danger'); }
+}
+function formImportar() {
+  const [g, gr] = S.es.par.split('|');
+  modal({ titulo: 'Importar lista de ' + g + ' ' + gr, size: 'modal-lg',
+    cuerpo: '<p class="small text-body-secondary">Pega un nombre por renglón (puedes copiarlos desde Excel). Las marcas finales “N.I.” o “U” se guardan como etiqueta. Se asignan matrícula y clave de consulta automáticas.</p><textarea id="f_t" class="form-control" rows="12" placeholder="APELLIDO APELLIDO NOMBRE"></textarea>',
+    ok: 'Importar', onOk: async () => { const n = await llamar('estudiantes.importar', { Grado: g, Grupo: gr, Texto: $('#f_t').value }); toast(n + ' estudiantes importados'); cargarEs(); } });
+}
+async function ordenarEst() {
+  if (!await confirmar('Se ordenará alfabéticamente y se renumerará la lista. ¿Continuar?', 'Ordenar')) return;
+  const [g, gr] = S.es.par.split('|');
+  try { await llamar('estudiantes.ordenar', { Grado: g, Grupo: gr }); toast('Lista ordenada'); cargarEs(); } catch (e) { toast(e.message, 'danger'); }
+}
+function abrirSeguimiento(estId) { S.seg = { par: S.es.par, estId }; ir('seguimiento'); }
+
+/* ---------- Promoción de grupo (historial por ciclo) ---------- */
+function formPromover() {
+  const [g, gr] = S.es.par.split('|'), n = parseInt(g, 10);
+  modal({ titulo: 'Promover ' + g + ' ' + gr + ' al siguiente ciclo', size: 'modal-lg',
+    cuerpo: '<div class="alert alert-info py-2 small">Los estudiantes activos pasan al nuevo grado y grupo. Su historial (calificaciones del ciclo actual) <strong>se conserva</strong> y podrá consultarse en el ciclo anterior.</div>' +
+      fCampo('p_ci', 'Ciclo escolar nuevo', sigCiclo(S.cfg.CICLO)) +
+      fSwitch('p_eg', 'Egresan (no pasan a otro grado)', false) +
+      '<div id="p_dest" class="row"><div class="col-6">' + fCampo('p_g', 'Nuevo grado', isNaN(n) ? '' : (n + 1) + '°') + '</div><div class="col-6">' + fCampo('p_gr', 'Nuevo grupo', gr) + '</div></div>' +
+      fSwitch('p_cc', 'Establecer el ciclo nuevo como vigente en Configuración', true),
+    ok: 'Promover', okClase: 'warning',
+    onOk: async () => {
+      const eg = $('#p_eg').checked;
+      const r = await llamar('estudiantes.promover', { Grado: g, Grupo: gr, NuevoCiclo: val('p_ci'), Egresar: eg, NuevoGrado: val('p_g'), NuevoGrupo: val('p_gr'), CambiarCiclo: $('#p_cc').checked });
+      toast(r.promovidos + ' estudiantes ' + (eg ? 'egresados' : 'promovidos'));
+      await refrescarClases(); S.es.par = ''; MODS.estudiantes();
+    } });
+  $('#p_eg').onchange = e => { $('#p_dest').style.display = e.target.checked ? 'none' : ''; };
+}
+
+/* ---------- Credenciales con QR (para pasar lista con la cámara o un lector) ---------- */
+async function credenciales() {
+  const [g, gr] = S.es.par.split('|'), d = await llamar('estudiantes.credenciales', { Grado: g, Grupo: gr });
+  if (!d.lista.length) return toast('No hay estudiantes activos.', 'warning');
+  const css = '<style>@page{size:letter;margin:8mm}body{font-family:Arial,sans-serif;margin:0}.g{display:grid;grid-template-columns:repeat(2,86mm);gap:4mm;justify-content:center}' +
+    '.c{width:86mm;height:54mm;border:1px solid #333;border-radius:3mm;padding:3mm;box-sizing:border-box;display:flex;gap:3mm;page-break-inside:avoid;overflow:hidden}' +
+    '.q{width:30mm;flex:none}.q svg{width:30mm;height:30mm}.i{flex:1;min-width:0;font-size:9px}.i b{font-size:10px;display:block;line-height:1.15}.i .n{font-size:11px;font-weight:bold;margin:2px 0;line-height:1.2}' +
+    '.i small{color:#555}.l{height:9mm;max-width:20mm;object-fit:contain}.k{margin-top:2px;font-size:8px;color:#333}</style>';
+  const cards = d.lista.map(e => '<div class="c"><div class="q">' + qrSvg('ASIS1:' + e.EstID) + '<div style="font-size:8px;text-align:center">' + esc(e.Matricula) + '</div></div><div class="i">' +
+    (d.logo ? '<img class="l" src="' + d.logo + '" alt="">' : '') + '<b>' + esc(d.cfg.INSTITUCION) + '</b><small>' + esc(d.cfg.CICLO) + '</small>' +
+    '<div class="n">' + esc(e.Nombre) + '</div><div>' + esc(e.Grado) + ' ' + esc(e.Grupo) + ' · No. ' + e.NumLista + '</div><div class="k">Consulta de calificaciones<br>Matrícula: <b style="display:inline">' + esc(e.Matricula) + '</b> · Clave: <b style="display:inline">' + esc(e.Clave) + '</b></div></div></div>').join('');
+  vistaHtml('Credenciales ' + g + ' ' + gr, '<!DOCTYPE html><html><head><meta charset="utf-8">' + css + '</head><body><div class="g">' + cards + '</div></body></html>');
+}
+</script>

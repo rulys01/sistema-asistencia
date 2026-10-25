@@ -1,0 +1,100 @@
+<script>
+/* ============================================================================
+ *  ACCESO: contraseña, Google, recuperación por correo, inicio y cierre de sesión
+ * ========================================================================== */
+(async function inicio() {
+  setTema(document.documentElement.getAttribute('data-bs-theme'));
+  try {
+    const d = await pub('infoPublica');
+    $('#loginInst').textContent = d.institucion || d.titulo;
+    $('#loginEnc').textContent = d.encabezado2 || d.titulo;
+    if (d.logo) { const i = $('#loginLogo'); i.src = d.logo; i.style.display = 'inline-block'; }
+  } catch (e) {}
+})();
+
+function errLogin(m) { const e = $('#loginErr'); e.textContent = m; e.classList.remove('d-none'); }
+
+async function entrar(ev) {
+  ev.preventDefault();
+  $('#loginErr').classList.add('d-none'); const b = $('#btnLogin'); b.disabled = true;
+  try {
+    const r = await pub('login', $('#lu').value, $('#lp').value);
+    if (!r.ok) return errLogin(r.error);
+    S.token = r.data.token; $('#lp').value = '';
+    await iniciarApp();
+  } catch (e) { errLogin(e.message); }
+  finally { b.disabled = false; }
+}
+/** Inicio con la cuenta de Google (requiere la implementación del dominio; ver LEEME). */
+async function entrarGoogle() {
+  $('#loginErr').classList.add('d-none'); const b = $('#btnGoogle'); b.disabled = true;
+  try {
+    const r = await pub('loginGoogle');
+    if (!r.ok) return errLogin(r.error);
+    S.token = r.data.token;
+    await iniciarApp();
+  } catch (e) { errLogin(e.message); }
+  finally { b.disabled = false; }
+}
+
+/* ---------- Recuperación de contraseña por correo ---------- */
+function formRecuperar() {
+  modal({ titulo: 'Recuperar contraseña', ok: 'Enviar código',
+    cuerpo: '<p class="small text-body-secondary">Escribe tu usuario o el correo registrado en tu cuenta. Te enviaremos un código de 6 dígitos válido por 15 minutos.</p>' + fCampo('r_u', 'Usuario o correo', $('#lu').value, 'text', 'autocapitalize="none"'),
+    onOk: async () => {
+      const u = val('r_u'), r = await pub('solicitarRecuperacion', u);
+      if (!r.ok) throw new Error(r.error);
+      toast(r.mensaje, 'info'); setTimeout(() => formRestablecer(u), 450);
+    } });
+}
+function formRestablecer(u) {
+  modal({ titulo: 'Nueva contraseña', ok: 'Cambiar contraseña', estatico: true,
+    cuerpo: '<div class="alert alert-info py-2 small">Revisa tu correo (y la carpeta de spam). Escribe el código recibido y tu nueva contraseña.</div>' +
+      fCampo('r_u', 'Usuario o correo', u || '', 'text', 'autocapitalize="none"') + fCampo('r_c', 'Código de 6 dígitos', '', 'text', 'inputmode="numeric" maxlength="6" autocomplete="one-time-code"') +
+      fCampo('r_n', 'Nueva contraseña (mínimo 8 caracteres)', '', 'password', 'autocomplete="new-password"') + fCampo('r_k', 'Confirmar contraseña', '', 'password', 'autocomplete="new-password"'),
+    onOk: async () => {
+      if ($('#r_n').value !== $('#r_k').value) throw new Error('La confirmación no coincide.');
+      const r = await pub('restablecerPassword', val('r_u'), val('r_c'), $('#r_n').value);
+      if (!r.ok) throw new Error(r.error);
+      toast(r.mensaje);
+    } });
+}
+
+/* ---------- Sesión ---------- */
+async function iniciarApp() {
+  const d = await llamar('init');
+  Object.assign(S, { user: d.usuario, perm: d.permisos, cfg: d.config, logo: d.logo, clases: d.clases, esqs: d.esquemas });
+  if (!S.clases.some(c => c.ClaseID === S.ctx.claseId)) { S.ctx.claseId = S.clases.length ? S.clases[0].ClaseID : ''; S.ctx.ciclo = ''; }
+  $('#viewLogin').style.display = 'none'; $('#viewApp').style.display = 'block';
+  $('#navInst').textContent = S.cfg.INSTITUCION || 'Asistencia y Calificaciones';
+  $('#navUser').textContent = S.user.nombre; $('#navRol').textContent = 'Rol: ' + S.user.rol + (S.user.google ? ' · Google' : '');
+  $('#menu').innerHTML = MENU.filter(m => !m[3] || S.perm[m[3]].ver).map(m =>
+    '<a href="#" class="menu-link" data-m="' + m[0] + '" onclick="ir(\'' + m[0] + '\');return false"><i class="bi bi-' + m[1] + '"></i> ' + m[2] + '</a>').join('');
+  ir('inicio');
+  if (S.user.cambiarPass) formPass(true);
+  sincronizar();
+}
+async function salir(silencioso) {
+  try { await vaciarTodo(); } catch (e) {}
+  if (S.token && !silencioso) { try { await llamar('salir', {}, true); } catch (e) {} }
+  clearInterval(S.timer); S.token = null;
+  $('#viewApp').style.display = 'none'; $('#viewLogin').style.display = 'flex';
+  if (mdl) { try { mdl.hide(); } catch (e) {} }
+}
+function formPass(forzado) {
+  modal({ titulo: forzado ? 'Debes cambiar tu contraseña' : 'Cambiar contraseña', estatico: forzado,
+    cuerpo: (forzado ? '<div class="alert alert-warning py-2">Por seguridad, define una contraseña personal antes de continuar.</div>' : '') +
+      fCampo('f_pa', 'Contraseña actual', '', 'password', 'autocomplete="current-password"') +
+      fCampo('f_pn', 'Nueva contraseña (mínimo 8 caracteres)', '', 'password', 'autocomplete="new-password"') +
+      fCampo('f_pc', 'Confirmar nueva contraseña', '', 'password', 'autocomplete="new-password"'),
+    onOk: async () => {
+      if ($('#f_pn').value !== $('#f_pc').value) throw new Error('La confirmación no coincide.');
+      await llamar('cuenta.password', { actual: $('#f_pa').value, nueva: $('#f_pn').value });
+      S.user.cambiarPass = false; toast('Contraseña actualizada');
+    } });
+  $('#mdlCancel').style.display = forzado ? 'none' : '';
+}
+function acerca() {
+  modal({ titulo: 'Acerca del sistema', cuerpo: '<p><strong>Sistema de Asistencia y Calificaciones</strong> · v2.0</p><p class="mb-1">Base de datos: Google Sheets · Plataforma: Google Apps Script</p><p class="mb-0">Desarrollador: <strong>Mtro. Raúl Dionicio</strong></p>' });
+}
+</script>

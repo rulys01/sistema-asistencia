@@ -1,0 +1,79 @@
+<script>
+/* ============================================================================
+ *  SEGUIMIENTO DE ESTUDIANTES (incidencias, evidencias, notas, reuniones con adjuntos)
+ *  y NOTIFICACIONES POR CORREO A TUTORES
+ * ========================================================================== */
+const TIPOS_SEG = { NOTA: ['Nota', 'chat-left-text'], INCIDENCIA: ['Incidencia', 'exclamation-octagon'], EVIDENCIA: ['Evidencia', 'paperclip'], REUNION: ['Reunión con tutor', 'people'] };
+
+MODS.seguimiento = async () => {
+  const pares = Array.from(new Map(S.clases.map(c => [c.Grado + '|' + c.Grupo, c])).values());
+  if (!pares.length) return render('<div class="alert alert-warning">No hay grupos disponibles.</div>');
+  if (!pares.some(c => c.Grado + '|' + c.Grupo === S.seg.par)) { S.seg.par = pares[0].Grado + '|' + pares[0].Grupo; S.seg.estId = ''; }
+  render('<h2 class="h4 mb-3"><i class="bi bi-journal-text"></i> Seguimiento de estudiantes</h2><div class="card mb-3"><div class="card-body"><div class="row g-2">' +
+    '<div class="col-12 col-md-3"><label class="form-label small mb-0" for="sg_par">Grado y grupo</label><select id="sg_par" class="form-select">' +
+    pares.map(c => '<option value="' + esc(c.Grado + '|' + c.Grupo) + '"' + (c.Grado + '|' + c.Grupo === S.seg.par ? ' selected' : '') + '>' + esc(c.Grado + ' ' + c.Grupo) + '</option>').join('') + '</select></div>' +
+    '<div class="col-12 col-md-6"><label class="form-label small mb-0" for="sg_e">Estudiante</label><select id="sg_e" class="form-select"></select></div></div></div></div><div id="sgBody"></div>');
+  $('#sg_par').onchange = () => { S.seg.par = $('#sg_par').value; S.seg.estId = ''; MODS.seguimiento(); };
+  const [g, gr] = S.seg.par.split('|');
+  S.seg.lista = await llamar('estudiantes.listar', { Grado: g, Grupo: gr });
+  $('#sg_e').innerHTML = S.seg.lista.map(e => '<option value="' + e.EstID + '"' + (e.EstID === S.seg.estId ? ' selected' : '') + '>' + e.NumLista + '. ' + esc(e.Nombre) + '</option>').join('');
+  $('#sg_e').onchange = () => { S.seg.estId = $('#sg_e').value; cargarSeg(); };
+  S.seg.estId = $('#sg_e').value; if (S.seg.estId) cargarSeg(); else $('#sgBody').innerHTML = '<div class="alert alert-info">No hay estudiantes en este grupo.</div>';
+};
+async function cargarSeg() {
+  const P = S.perm.seguimiento, id = S.seg.estId, items = await llamar('seguimiento.listar', { EstID: id });
+  if (id !== S.seg.estId) return;
+  $('#sgBody').innerHTML = (P.crear ? '<div class="card mb-3"><div class="card-header">Nuevo registro</div><div class="card-body"><div class="row g-2"><div class="col-6 col-md-3">' +
+    fSel('sg_t', 'Tipo', Object.keys(TIPOS_SEG).map(k => [k, TIPOS_SEG[k][0]]), 'NOTA') + '</div><div class="col-6 col-md-3">' + fCampo('sg_f', 'Fecha', hoyISO(), 'date') + '</div>' +
+    '<div class="col-12 col-md-6">' + fCampo('sg_a', 'Adjunto (PDF, imagen, Word; máx. 4 MB)', '', 'file', 'accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.txt"') + '</div></div>' +
+    fArea('sg_x', 'Comentario', '', 3, 'maxlength="1500" placeholder="Describe la incidencia, evidencia o acuerdo…"') +
+    '<button class="btn btn-primary" onclick="guardarSeg()"><i class="bi bi-plus-lg"></i> Agregar registro</button></div></div>' : '') +
+    '<div class="card"><div class="card-header">Historial (' + items.length + ')</div><div class="card-body">' +
+    (items.map(s => { const t = TIPOS_SEG[s.Tipo] || ['Nota', 'chat']; return '<div class="seg-item ' + s.Tipo + '"><div class="d-flex justify-content-between gap-2"><div><span class="badge text-bg-secondary"><i class="bi bi-' + t[1] + '"></i> ' + t[0] + '</span> <span class="small text-body-secondary">' + esc(s.Fecha) + ' · ' + esc(s.Usuario) + '</span></div>' +
+      (P.eliminar ? btnIco('danger', 'trash', "delSeg('" + s.SegID + "')", 'Eliminar') : '') + '</div><div style="white-space:pre-wrap">' + esc(s.Texto) + '</div>' +
+      (s.ArchivoNombre ? '<button class="btn btn-sm btn-outline-secondary mt-1" onclick="bajarSeg(\'' + s.SegID + '\')"><i class="bi bi-download"></i> ' + esc(s.ArchivoNombre) + '</button>' : '') + '</div>'; }).join('') ||
+      '<div class="text-center text-body-secondary py-3">Sin registros de seguimiento.</div>') + '</div></div>';
+}
+async function guardarSeg() {
+  try {
+    const f = $('#sg_a').files[0]; let archivo = null;
+    if (f) { if (f.size > 4 * 1024 * 1024) throw new Error('El archivo no debe pesar más de 4 MB.'); archivo = { nombre: f.name, mime: f.type, b64: await leerArchivoB64(f) }; }
+    await llamar('seguimiento.guardar', { EstID: S.seg.estId, Tipo: val('sg_t'), Fecha: val('sg_f'), Texto: val('sg_x'), archivo });
+    toast('Registro agregado'); cargarSeg();
+  } catch (e) { toast(e.message, 'danger'); }
+}
+async function bajarSeg(id) { try { const r = await llamar('seguimiento.archivo', { SegID: id }); descargarBlob(b64ABlob(r.b64, r.mime), r.nombre); } catch (e) { toast(e.message, 'danger'); } }
+async function delSeg(id) {
+  if (!await confirmar('El registro se enviará a la papelera. ¿Continuar?')) return;
+  try { await llamar('seguimiento.eliminar', { SegID: id }); toast('Registro eliminado'); cargarSeg(); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ---------- Notificaciones a tutores ---------- */
+MODS.comunicacion = async () => {
+  if (!S.clases.length) return render(barraCtx());
+  render('<h2 class="h4 mb-3"><i class="bi bi-envelope-paper"></i> Notificar a tutores</h2>' + barraCtx() + '<div id="cmBody">' + spinner() + '</div>'); bindCtx();
+  S.cm = await llamar('comunicacion.vista', ctxP()); pintarCm();
+};
+function pintarCm() {
+  const d = S.cm, P = S.perm.comunicacion, soloRiesgo = S.cmRiesgo !== false;
+  const l = d.filas.filter(f => !soloRiesgo || f.riesgo);
+  $('#cmBody').innerHTML = '<div class="card"><div class="card-header d-flex flex-wrap justify-content-between gap-2 align-items-center"><div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" id="cm_r" ' + (soloRiesgo ? 'checked' : '') + '><label class="form-check-label" for="cm_r">Mostrar solo alumnos en riesgo</label></div>' +
+    '<span class="small text-body-secondary">Riesgo = calificación menor a ' + d.aprobatoria + ' o asistencia menor a ' + d.umbral + '% (sesiones registradas: ' + d.sesiones + ')</span></div>' +
+    '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th style="width:36px"><input type="checkbox" id="cm_all" aria-label="Seleccionar todos"></th><th>Estudiante</th><th class="text-center">Calif.</th><th class="text-center">Asist.</th><th>Tutor</th></tr></thead><tbody>' +
+    (l.map(f => '<tr><td><input type="checkbox" class="cm-e" value="' + f.EstID + '" ' + (f.tieneCorreo ? '' : 'disabled') + ' aria-label="Seleccionar"></td><td>' + f.NumLista + '. ' + esc(f.Nombre) + (f.riesgo ? ' <span class="badge text-bg-danger">Riesgo</span>' : '') + '</td><td class="text-center"><span class="badge text-bg-' + colorCal(f.gral, d.aprobatoria) + '">' + f1(f.gral) + '</span></td><td class="text-center">' + f.pctSes + '%</td><td class="small">' + (f.tieneCorreo ? esc(f.Tutor || '') + ' <span class="text-body-secondary">' + esc(f.CorreoTutor) + '</span>' : '<span class="text-danger">Sin correo registrado</span>') + '</td></tr>').join('') ||
+      '<tr><td colspan="5" class="text-center text-body-secondary py-4">Ningún estudiante cumple el filtro.</td></tr>') + '</tbody></table></div>' +
+    (P.crear ? '<div class="card-body border-top">' + fArea('cm_m', 'Mensaje adicional para el tutor (opcional)', '', 3, 'maxlength="800"') +
+      '<button class="btn btn-primary" onclick="enviarCm()"><i class="bi bi-send"></i> Enviar a seleccionados</button> <span class="small text-body-secondary ms-2">El correo incluye calificación del parcial, asistencia y observaciones.</span></div>' : '') + '</div>';
+  $('#cm_r').onchange = e => { S.cmRiesgo = e.target.checked; pintarCm(); };
+  $('#cm_all').onchange = e => $$('.cm-e:not(:disabled)').forEach(c => c.checked = e.target.checked);
+}
+async function enviarCm() {
+  const ids = $$('.cm-e:checked').map(c => c.value);
+  if (!ids.length) return toast('Selecciona al menos un estudiante con correo.', 'warning');
+  if (!await confirmar('Se enviará un correo a ' + ids.length + ' tutor(es). ¿Continuar?', 'Enviar')) return;
+  try {
+    const r = await llamar('comunicacion.enviar', Object.assign(ctxP(), { EstIDs: ids, Mensaje: val('cm_m') }));
+    toast(r.enviados + ' correo(s) enviado(s)' + (r.fallidos.length ? ' · ' + r.fallidos.length + ' fallaron' : ''), r.fallidos.length ? 'warning' : 'success');
+  } catch (e) { toast(e.message, 'danger'); }
+}
+</script>

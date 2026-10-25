@@ -1,0 +1,29 @@
+<script>
+/* ============================================================================
+ *  CONSULTA PÚBLICA DE CALIFICACIONES (matrícula + clave) con historial por ciclo
+ * ========================================================================== */
+async function consultar(ev) {
+  ev.preventDefault(); const e = $('#gErr'); e.classList.add('d-none');
+  try {
+    const r = await pub('consultaInvitado', $('#gm').value, $('#gc').value);
+    if (!r.ok) { e.textContent = r.error; e.classList.remove('d-none'); return; }
+    pintarInvitado(r.data); $('#viewLogin').style.display = 'none'; $('#viewGuest').style.display = 'block'; $('#gc').value = '';
+  } catch (x) { e.textContent = x.message; e.classList.remove('d-none'); }
+}
+function salirInvitado() { $('#viewGuest').style.display = 'none'; $('#viewLogin').style.display = 'flex'; }
+function tablaMaterias(ms) {
+  return ms.map(m => {
+    const N = m.esq.NumPeriodos, NP = m.esq.Parciales, apr = m.esq.Aprobatoria;
+    return '<div class="card mb-3"><div class="card-header d-flex flex-wrap justify-content-between gap-2"><strong>' + esc(m.asignatura) + '</strong><span class="small text-body-secondary">Docente: ' + esc(m.docente) + '</span></div><div class="table-responsive"><table class="table table-sm align-middle text-center mb-0"><thead><tr><th class="text-start">' + esc(m.esq.NombrePeriodo) + '</th>' +
+      Array.from({ length: NP }, (_, i) => '<th>' + esc(nomParc(i + 1)) + '</th>').join('') + '<th>Calificación</th></tr></thead><tbody>' +
+      m.trim.map((t, i) => '<tr><td class="text-start">' + ORD[i] + ' ' + esc(m.esq.NombrePeriodo.toLowerCase()) + '</td>' + t.p.map(g => '<td>' + (g == null ? '—' : f1(g)) + '</td>').join('') + '<td><strong>' + (t.cal == null ? '—' : t.cal) + '</strong></td></tr>').join('') +
+      '</tbody><tfoot><tr class="table-light"><th class="text-start" colspan="' + (NP + 1) + '">Calificación final' + (m.provisional && m.final != null ? ' (provisional)' : '') + '</th><th><span class="badge fs-6 text-bg-' + colorCal(m.final, apr) + '">' + (m.final == null ? '—' : f1(m.final)) + '</span></th></tr></tfoot></table></div></div>';
+  }).join('');
+}
+function pintarInvitado(d) {
+  const e = d.estudiante;
+  $('#guestBody').innerHTML = '<div class="text-center mb-3">' + (d.logo ? '<img src="' + d.logo + '" class="logo-img mb-2" alt="Logotipo"><br>' : '') + '<h1 class="h4 mb-0">' + esc(d.institucion) + '</h1><div class="text-body-secondary">' + esc(d.encabezado2) + (d.cct ? ' · CCT ' + esc(d.cct) : '') + '</div></div>' +
+    '<div class="card mb-3"><div class="card-body"><div class="row"><div class="col-12 col-md-6"><div class="small text-body-secondary">Estudiante</div><div class="fw-bold">' + esc(e.nombre) + '</div></div><div class="col-6 col-md-3"><div class="small text-body-secondary">Matrícula</div><div class="fw-bold">' + esc(e.matricula) + '</div></div><div class="col-6 col-md-3"><div class="small text-body-secondary">Grado y grupo</div><div class="fw-bold">' + esc(e.grado + ' ' + e.grupo) + '</div></div></div></div></div>' +
+    (d.ciclos.map((c, i) => '<h2 class="h5 mt-4">Ciclo escolar ' + esc(c.ciclo) + ' <small class="text-body-secondary">· ' + esc(c.grado + ' ' + c.grupo) + (i ? ' (historial)' : '') + '</small></h2>' + tablaMaterias(c.materias)).join('') || '<div class="alert alert-info">Aún no hay calificaciones registradas.</div>');
+}
+</script>

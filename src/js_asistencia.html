@@ -1,0 +1,153 @@
+<script>
+/* ============================================================================
+ *  ASISTENCIA (tiempo real): presente, retardo, justificada, permiso y falta + pase de lista por QR
+ * ========================================================================== */
+function formPeriodo(per, despues) {
+  const c = claseActual(), nuevo = !per;
+  modal({ titulo: 'Asistencias para evaluación', estatico: nuevo,
+    cuerpo: '<p class="mb-1"><strong>' + esc(claseTxt(c)) + '</strong></p><p class="small text-body-secondary">' + nomPer(c, S.ctx.t) + ' · ' + nomParc(S.ctx.p) + '</p>' +
+      '<div class="alert alert-info py-2 small">Indica <strong>cuántas asistencias (días de clase)</strong> se tomarán en cuenta para calificar este parcial. La calificación de asistencia es: asistencias × 10 ÷ total de días (retardo, justificada y permiso valen según la configuración).</div>' +
+      fCampo('f_td', 'Número de asistencias para evaluación', per ? per.TotalDias : '', 'number', 'min="1" max="300" inputmode="numeric"') +
+      fCampo('f_mes', 'Mes(es) del parcial (ej. sep - nov)', per ? per.Mes : '') +
+      fCampo('f_pa', 'Puntos que vale la asistencia (de 100)', per ? per.PesoAsistencia : 10, 'number', 'min="0" max="100"'),
+    ok: 'Guardar', onOk: async () => {
+      await llamar('asistencia.periodo', Object.assign(ctxP(), { TotalDias: val('f_td'), Mes: val('f_mes'), PesoAsistencia: val('f_pa') }));
+      toast('Parcial configurado'); if (despues) despues(); else ir(S.mod);
+    } });
+}
+
+MODS.asistencia = async () => {
+  if (!S.clases.length) return render(barraCtx());
+  if (!S.as.fecha) S.as.fecha = hoyISO();
+  S.as.pend = {};
+  render(barraCtx() + '<div id="asBody">' + spinner() + '</div>'); bindCtx();
+  await cargarAs(true);
+  S.timer = setInterval(() => { if (!Object.keys(S.as.pend).length && !colaMia().length && navigator.onLine && !document.hidden) cargarAs(false).catch(() => {}); }, 15000);
+};
+async function cargarAs(primera) {
+  const ver = S.as.ver, f = S.as.fecha;
+  const d = await llamar('asistencia.cargar', Object.assign(ctxP(), { Fecha: f }), !primera);
+  if (S.mod !== 'asistencia' || ver !== S.as.ver || f !== S.as.fecha) return;
+  S.as.data = d; pintarAs();
+  if (primera && !d.periodo && permC('asistencia').editar) formPeriodo(null);
+}
+function pintarAs() {
+  const d = S.as.data, P = permC('asistencia'), f = S.as.fecha;
+  $('#asBody').innerHTML =
+    '<div class="card mb-3"><div class="card-body">' +
+    '<div class="row g-2 align-items-end"><div class="col-12 col-md-5"><label class="form-label small mb-0" for="as_f">Fecha de la sesión</label>' +
+    '<div class="input-group"><button class="btn btn-outline-secondary" onclick="irFecha(sumaDias(S.as.fecha,-1))" aria-label="Día anterior"><i class="bi bi-chevron-left"></i></button>' +
+    '<input type="date" id="as_f" class="form-control" value="' + f + '"><button class="btn btn-outline-secondary" onclick="irFecha(sumaDias(S.as.fecha,1))" aria-label="Día siguiente"><i class="bi bi-chevron-right"></i></button>' +
+    '<button class="btn btn-outline-primary" onclick="irFecha(hoyISO())">Hoy</button></div></div>' +
+    '<div class="col-12 col-md-7"><div class="d-flex flex-wrap gap-2 align-items-center">' +
+    '<span class="badge text-bg-primary fs-6">Asistencias para evaluación: ' + (d.periodo ? d.total : '—') + '</span>' +
+    (P.editar ? '<button class="btn btn-sm btn-outline-primary" onclick="formPeriodo(S.as.data.periodo)"><i class="bi bi-sliders"></i> ' + (d.periodo ? 'Configurar' : 'Definir') + '</button>' : '') +
+    '<span class="badge text-bg-secondary">Sesiones registradas: ' + d.fechas.length + '</span></div></div></div>' +
+    '<div class="small text-body-secondary mt-2 text-capitalize">' + esc(fechaLarga(f)) + '</div>' +
+    (d.fechas.length ? '<div class="d-flex flex-wrap gap-1 mt-2">' + d.fechas.map(x => '<button class="btn btn-sm ' + (x === f ? 'btn-primary' : 'btn-outline-secondary') + '" onclick="irFecha(\'' + x + '\')">' + esc(fechaCorta(x)) + '</button>').join('') + '</div>' : '') +
+    '</div></div>' +
+    '<div class="card"><div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">' +
+    '<div id="asResumen" class="d-flex gap-1 flex-wrap"></div><div class="d-flex gap-2 flex-wrap align-items-center"><span id="asEstado" class="small text-body-secondary"></span>' +
+    (P.editar ? '<button class="btn btn-sm btn-outline-dark" onclick="abrirQR()"><i class="bi bi-qr-code-scan"></i> Escanear QR</button><button class="btn btn-sm btn-success" onclick="marcarTodos(1)"><i class="bi bi-check2-all"></i> Sin marcar → presentes</button><button class="btn btn-sm btn-outline-secondary" onclick="marcarTodos(\'\')">Limpiar</button>' : '') +
+    (P.eliminar && d.fechas.indexOf(f) >= 0 ? '<button class="btn btn-sm btn-outline-danger" onclick="borrarFecha()" aria-label="Eliminar sesión"><i class="bi bi-trash"></i></button>' : '') + '</div></div>' +
+    '<div class="card-body border-bottom py-2"><input id="as_q" class="form-control form-control-sm" placeholder="Buscar estudiante…"></div>' +
+    '<div id="asLista" class="list-group list-group-flush"></div></div>';
+  $('#as_f').onchange = e => irFecha(e.target.value);
+  $('#as_q').oninput = pintarListaAs;
+  pintarListaAs();
+}
+function pintarListaAs() {
+  const d = S.as.data, P = permC('asistencia'), q = ($('#as_q') ? $('#as_q').value : '').toLowerCase(), cnt = { 1: 0, R: 0, J: 0, PM: 0, 0: 0 };
+  d.estudiantes.forEach(e => { const v = d.marcas[e.EstID]; if (v !== undefined) cnt[v]++; });
+  const sin = d.estudiantes.length - Object.keys(d.marcas).length;
+  $('#asResumen').innerHTML = ESTADOS.map(s => '<span class="badge text-bg-' + s[3] + '">' + s[1] + ' ' + cnt[s[0]] + '</span>').join('') + '<span class="badge text-bg-secondary">Sin marcar ' + sin + '</span>';
+  $('#asLista').innerHTML = d.estudiantes.filter(e => !q || e.Nombre.toLowerCase().includes(q)).map(e => {
+    const v = d.marcas[e.EstID], r = d.resumen[e.EstID] || { p: 0, r: 0, j: 0, pm: 0, f: 0, pct: 0 };
+    return '<div class="list-group-item d-flex align-items-center gap-2 as-row flex-wrap"><span class="badge text-bg-secondary">' + e.NumLista + '</span>' +
+      '<div class="flex-grow-1" style="min-width:150px"><div class="fw-semibold text-truncate">' + esc(e.Nombre) + (e.Etiqueta ? ' <span class="badge text-bg-light border">' + esc(e.Etiqueta) + '</span>' : '') + '</div>' +
+      '<small class="text-body-secondary">' + r.p + ' asist. · ' + r.r + ' ret. · ' + r.j + ' just. · ' + r.pm + ' perm. · ' + r.f + ' faltas · ' + Math.round(r.pct) + '%</small></div>' +
+      '<div class="btn-group">' + ESTADOS.map(s => '<button class="btn btn-' + (v === s[0] ? '' : 'outline-') + s[3] + '" ' + (P.editar ? '' : 'disabled') + ' onclick="marcar(\'' + e.EstID + '\',' + JSON.stringify(s[0]).replace(/"/g, '&quot;') + ')" title="' + s[1] + '" aria-label="' + s[1] + '"><i class="bi bi-' + s[2] + '"></i></button>').join('') + '</div></div>';
+  }).join('') || '<div class="list-group-item text-center text-body-secondary py-4">No hay estudiantes en este grupo.</div>';
+}
+const claveAs = v => v === 1 ? 'p' : v === 0 ? 'f' : v === 'R' ? 'r' : v === 'J' ? 'j' : v === 'PM' ? 'pm' : null;
+function ajustarResumen(id, ant, nuevo) {
+  const d = S.as.data, r = d.resumen[id] || (d.resumen[id] = { p: 0, r: 0, j: 0, pm: 0, f: 0, pct: 0 });
+  if (claveAs(ant)) r[claveAs(ant)]--; if (claveAs(nuevo)) r[claveAs(nuevo)]++;
+  const c = S.cfg, w = r.p + r.r * (c.PESO_RETARDO == null ? 0.5 : c.PESO_RETARDO) + r.j * (c.PESO_JUSTIFICADA == null ? 1 : c.PESO_JUSTIFICADA) + r.pm * (c.PESO_PERMISO == null ? 1 : c.PESO_PERMISO);
+  r.pct = d.total ? Math.min(100, w / d.total * 100) : 0;
+}
+/** Fija el estado de un estudiante (nuevo = '' quita la marca). */
+function fijarAs(id, nuevo) {
+  if (!S.as.data.periodo) { toast('Primero define el número de asistencias para evaluación.', 'warning'); return false; }
+  const m = S.as.data.marcas, ant = m[id];
+  if (ant === nuevo || (ant === undefined && nuevo === '')) return true;
+  ajustarResumen(id, ant, nuevo);
+  if (nuevo === '') delete m[id]; else m[id] = nuevo;
+  S.as.pend[id] = nuevo; S.as.ver++;
+  pintarListaAs(); estadoAs('Guardando…');
+  clearTimeout(S.as.t); S.as.t = setTimeout(() => vaciarAs().catch(() => {}), 350);
+  return true;
+}
+function marcar(id, v) { const ant = S.as.data.marcas[id]; fijarAs(id, ant === v ? '' : v); }
+function marcarTodos(v) {
+  S.as.data.estudiantes.forEach(e => { const ant = S.as.data.marcas[e.EstID]; if (v === '') fijarAs(e.EstID, ''); else if (ant === undefined) fijarAs(e.EstID, v); });
+}
+const estadoAs = t => { const e = $('#asEstado'); if (e) e.innerHTML = t; };
+async function vaciarAs() {
+  clearTimeout(S.as.t);
+  const pend = S.as.pend; S.as.pend = {};
+  const marcas = Object.keys(pend).map(id => ({ EstID: id, valor: pend[id] === '' ? null : pend[id] }));
+  if (!marcas.length) return;
+  try {
+    const r = await llamar('asistencia.guardar', Object.assign(ctxP(), { Fecha: S.as.fecha, marcas }), true);
+    estadoAs(r && r.encolado ? '<i class="bi bi-cloud-slash text-warning"></i> Guardado en el dispositivo (pendiente de enviar)' : '<i class="bi bi-check-circle text-success"></i> Guardado ' + new Date().toLocaleTimeString('es-MX'));
+    if (S.as.data && S.as.data.fechas.indexOf(S.as.fecha) < 0 && Object.keys(S.as.data.marcas).length) S.as.data.fechas = S.as.data.fechas.concat(S.as.fecha).sort();
+  } catch (e) {
+    Object.keys(pend).forEach(id => { if (!(id in S.as.pend)) S.as.pend[id] = pend[id]; });
+    estadoAs('<i class="bi bi-exclamation-triangle text-danger"></i> No guardado'); toast(e.message, 'danger'); throw e;
+  }
+}
+async function irFecha(f) {
+  if (!f) return;
+  try { await vaciarAs(); } catch (e) { return; }
+  S.as.fecha = f; S.as.ver++; cargarAs(true);
+}
+async function borrarFecha() {
+  if (!await confirmar('Se eliminarán todas las marcas de asistencia del ' + fechaCorta(S.as.fecha) + '. ¿Continuar?')) return;
+  try { await llamar('asistencia.borrarFecha', Object.assign(ctxP(), { Fecha: S.as.fecha })); toast('Sesión eliminada'); S.as.ver++; cargarAs(true); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ---------- Pase de lista con código QR (cámara o lector USB/teclado) ---------- */
+let qrScanner = null, qrUlt = { t: 0, c: '' };
+function beep() { try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(); o.frequency.value = 880; o.connect(a.destination); o.start(); setTimeout(() => { o.stop(); a.close(); }, 120); } catch (e) {} }
+function qrMsg(t, tipo) { const e = $('#qrLog'); if (e) e.innerHTML = '<div class="alert alert-' + tipo + ' py-1 mb-1">' + esc(t) + '</div>' + e.innerHTML.split('</div>').slice(0, 4).join('</div>'); }
+function abrirQR() {
+  if (!S.as.data.periodo) return toast('Primero define el número de asistencias para evaluación.', 'warning');
+  modal({ titulo: 'Pase de lista con QR · ' + fechaCorta(S.as.fecha), size: 'modal-lg',
+    cuerpo: '<div class="row g-2 mb-2"><div class="col-12 col-md-5">' + fSel('qr_v', 'Registrar como', [['1', 'Presente'], ['R', 'Retardo']], '1') + '</div>' +
+      '<div class="col-12 col-md-7"><label class="form-label" for="qrManual">Lector USB, matrícula o número de lista</label><input id="qrManual" class="form-control" placeholder="Escanea o escribe y pulsa Enter" autocomplete="off"></div></div>' +
+      '<div id="qrBox"></div><div id="qrLog" class="mt-2"></div>' +
+      '<div class="form-text">Usa las credenciales con QR (Estudiantes → Credenciales QR). Si la cámara no se abre en tu navegador, abre el sistema en una pestaña completa o usa el lector USB / campo manual.</div>' });
+  $('#mdl').addEventListener('hidden.bs.modal', detenerQR, { once: true });
+  $('#qrManual').onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); procesarCodigoAs(ev.target.value); ev.target.value = ''; } };
+  setTimeout(iniciarCamara, 350);
+}
+async function iniciarCamara() {
+  if (typeof Html5Qrcode === 'undefined' || !$('#qrBox')) return;
+  try {
+    qrScanner = new Html5Qrcode('qrBox');
+    await qrScanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, txt => procesarCodigoAs(txt), () => {});
+  } catch (e) { qrScanner = null; qrMsg('No se pudo abrir la cámara (permiso denegado o bloqueada por el navegador). Usa el lector USB o el campo manual.', 'warning'); }
+}
+function detenerQR() { if (qrScanner) { const s = qrScanner; qrScanner = null; s.stop().then(() => s.clear()).catch(() => {}); } }
+function procesarCodigoAs(txt) {
+  txt = String(txt || '').trim(); if (!txt) return;
+  const ahora = Date.now(); if (txt === qrUlt.c && ahora - qrUlt.t < 3000) return; qrUlt = { t: ahora, c: txt };
+  const d = S.as.data; let e = null;
+  if (txt.indexOf('ASIS1:') === 0) e = d.estudiantes.find(x => x.EstID === txt.slice(6));
+  else e = d.estudiantes.find(x => String(x.Matricula).toUpperCase() === txt.toUpperCase()) || d.estudiantes.find(x => String(x.NumLista) === txt);
+  if (!e) { qrMsg('Código no reconocido en este grupo: ' + txt.slice(0, 30), 'danger'); return; }
+  const v = $('#qr_v').value === 'R' ? 'R' : 1;
+  if (fijarAs(e.EstID, v)) { beep(); qrMsg(e.NumLista + '. ' + e.Nombre + ' → ' + (v === 1 ? 'Presente' : 'Retardo'), 'success'); }
+}
+</script>

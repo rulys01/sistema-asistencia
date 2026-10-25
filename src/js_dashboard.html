@@ -1,0 +1,63 @@
+<script>
+/* ============================================================================
+ *  INICIO: indicadores por grupo, alumnos en riesgo y gráfica de tendencia
+ * ========================================================================== */
+MODS.inicio = async () => {
+  const accesos = MENU.filter(m => m[3] && S.perm[m[3]].ver).map(m =>
+    '<div class="col-6 col-md-4 col-xl-3"><a href="#" class="card h-100 text-decoration-none text-center shadow-sm" onclick="ir(\'' + m[0] + '\');return false"><div class="card-body py-3"><i class="bi bi-' + m[1] + ' fs-2 text-primary"></i><div class="mt-1 fw-semibold text-body">' + m[2] + '</div></div></a></div>').join('');
+  render('<div class="mb-3"><h2 class="h4">Bienvenido(a), ' + esc(S.user.nombre) + '</h2><p class="text-body-secondary mb-0">' +
+    (S.clases.length ? 'Ciclo escolar ' + esc(S.cfg.CICLO || '') : 'Aún no hay asignaturas registradas.') + '</p></div>' +
+    '<div id="dash">' + (S.clases.length ? spinner() : '') + '</div><h3 class="h6 text-body-secondary mt-4">Accesos</h3><div class="row g-3">' + accesos + '</div>');
+  if (!S.clases.length) return;
+  try { S.dash = await llamar('dashboard.datos', { Ciclo: S.cfg.CICLO || '' }); pintarDash(); }
+  catch (e) { $('#dash').innerHTML = '<div class="alert alert-danger">' + esc(e.message) + '</div>'; }
+};
+
+function pintarDash() {
+  const d = S.dash, cl = d.clases;
+  if (!cl.length) { $('#dash').innerHTML = '<div class="alert alert-info">No hay asignaturas del ciclo ' + esc(d.ciclo) + '.</div>'; return; }
+  const conProm = cl.filter(c => c.prom != null);
+  const promGen = conProm.length ? conProm.reduce((s, c) => s + c.prom, 0) / conProm.length : null;
+  const nRiesgo = cl.reduce((s, c) => s + c.riesgo.length, 0), nEst = cl.reduce((s, c) => s + c.nEst, 0);
+  const kpi = (t, v, ico, cls) => '<div class="col-6 col-lg-3"><div class="card h-100"><div class="card-body py-2"><div class="small text-body-secondary"><i class="bi bi-' + ico + '"></i> ' + t + '</div><div class="kpi text-' + (cls || 'body') + '">' + v + '</div></div></div></div>';
+  const riesgos = [];
+  cl.forEach(c => c.riesgo.forEach(r => riesgos.push({ c, r })));
+  riesgos.sort((a, b) => a.r.gral - b.r.gral);
+  $('#dash').innerHTML =
+    '<div class="row g-2 mb-3">' + kpi('Asignaturas', cl.length, 'journal-bookmark') + kpi('Estudiantes', nEst, 'people') +
+    kpi('Promedio general', promGen == null ? '—' : f1(promGen), 'graph-up', promGen == null ? '' : colorCal(promGen) === 'danger' ? 'danger' : 'success') +
+    kpi('Alumnos en riesgo', nRiesgo, 'exclamation-triangle', nRiesgo ? 'danger' : 'success') + '</div>' +
+    '<div class="row g-3 mb-3"><div class="col-12 col-xl-7"><div class="card h-100"><div class="card-header">Tendencia del promedio por parcial</div><div class="card-body"><div style="position:relative;height:260px"><canvas id="cvTend" aria-label="Gráfica de tendencia"></canvas></div></div></div></div>' +
+    '<div class="col-12 col-xl-5"><div class="card h-100"><div class="card-header">Resumen por grupo</div><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Grupo</th><th class="text-center">Prom.</th><th class="text-center">Aprob.</th><th class="text-center">Riesgo</th></tr></thead><tbody>' +
+    cl.map(c => '<tr><td>' + esc(c.titulo) + '</td><td class="text-center">' + (c.prom == null ? '—' : '<span class="badge text-bg-' + colorCal(c.prom, c.aprobatoria) + '">' + f1(c.prom) + '</span>') + '</td><td class="text-center">' + (c.pctApr == null ? '—' : c.pctApr + '%') + '</td><td class="text-center">' + (c.riesgo.length ? '<span class="badge text-bg-danger">' + c.riesgo.length + '</span>' : '0') + '</td></tr>').join('') +
+    '</tbody></table></div></div></div></div>' +
+    '<div class="card"><div class="card-header d-flex justify-content-between"><span>Alumnos en riesgo (calificación menor a la aprobatoria o asistencia menor a ' + d.umbral + '%)</span></div>' +
+    '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Estudiante</th><th>Asignatura</th><th class="text-center">Calif.</th><th class="text-center">Asist.</th><th>Motivo</th><th></th></tr></thead><tbody>' +
+    (riesgos.map((x, i) => '<tr><td>' + x.r.NumLista + '. ' + esc(x.r.Nombre) + '</td><td>' + esc(x.c.titulo) + '</td><td class="text-center"><span class="badge text-bg-' + colorCal(x.r.gral, x.c.aprobatoria) + '">' + f1(x.r.gral) + '</span></td><td class="text-center">' + x.r.pctSes + '%</td><td>' + x.r.motivos.map(m => '<span class="badge text-bg-warning me-1">' + m + '</span>').join('') + '</td><td class="text-end">' +
+      (S.perm.comunicacion && S.perm.comunicacion.crear ? '<button class="btn btn-sm btn-outline-primary" ' + (x.r.tutor ? '' : 'disabled title="Sin correo de tutor"') + ' onclick="notificarRiesgo(' + i + ')"><i class="bi bi-envelope"></i></button>' : '') + '</td></tr>').join('') ||
+      '<tr><td colspan="6" class="text-center text-body-secondary py-3">Sin alumnos en riesgo con los datos capturados.</td></tr>') + '</tbody></table></div></div>';
+  S.dashRiesgos = riesgos;
+  pintarTendencia();
+}
+function pintarTendencia() {
+  if (typeof Chart === 'undefined') return;
+  const cl = S.dash.clases.filter(c => c.tendencia.length);
+  if (S.chart) { S.chart.destroy(); S.chart = null; }
+  const cv = $('#cvTend'); if (!cv) return;
+  if (!cl.length) { cv.parentNode.innerHTML = '<div class="text-center text-body-secondary py-5">Aún no hay parciales con datos para graficar.</div>'; return; }
+  const labels = Array.from(new Set(cl.flatMap(c => c.tendencia.map(t => t.label))));
+  const pal = ['#0d6efd', '#198754', '#dc3545', '#fd7e14', '#6f42c1', '#20c997', '#d63384', '#0dcaf0'];
+  S.chart = new Chart(cv, { type: 'line', data: { labels, datasets: cl.map((c, i) => ({ label: c.titulo, borderColor: pal[i % pal.length], backgroundColor: pal[i % pal.length],
+      tension: .25, spanGaps: true, data: labels.map(l => { const t = c.tendencia.find(x => x.label === l); return t ? t.prom : null; }) })) },
+    options: { responsive: true, maintainAspectRatio: false, scales: { y: { min: 0, max: 10 } }, plugins: { legend: { position: 'bottom' } } } });
+}
+function notificarRiesgo(i) {
+  const x = S.dashRiesgos[i];
+  modal({ titulo: 'Notificar al tutor de ' + x.r.Nombre, ok: 'Enviar correo',
+    cuerpo: '<p class="small text-body-secondary">Se enviará un resumen del parcial (calificación y asistencia) a la persona tutora registrada. Puedes agregar un mensaje.</p>' + fArea('n_m', 'Mensaje adicional (opcional)', '', 4, 'maxlength="800"'),
+    onOk: async () => {
+      const r = await llamar('comunicacion.enviar', { ClaseID: x.c.ClaseID, Trimestre: x.c.t, Parcial: x.c.pa, EstIDs: [x.r.EstID], Mensaje: val('n_m') });
+      if (r.enviados) toast('Correo enviado'); else throw new Error('No se pudo enviar (verifica el correo del tutor).');
+    } });
+}
+</script>

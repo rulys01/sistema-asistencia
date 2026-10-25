@@ -1,0 +1,50 @@
+<script>
+/* ============================================================================
+ *  MODO SIN CONEXIÓN
+ *  Las capturas de asistencia y calificaciones se guardan en este dispositivo cuando falla la red
+ *  y se envían solas al reconectar (cola persistente en localStorage).
+ *  Nota: la pestaña debe seguir abierta; Apps Script no permite instalar un service worker.
+ * ========================================================================== */
+const COLA_KEY = 'cola_asistencia_v2';
+let colaMem = [], sincronizando = false;
+
+function colaLeer() { try { return JSON.parse(localStorage.getItem(COLA_KEY) || '[]'); } catch (e) { return colaMem; } }
+function colaGuardar(l) { colaMem = l; try { localStorage.setItem(COLA_KEY, JSON.stringify(l)); } catch (e) {} }
+function colaAgregar(accion, datos) {
+  const l = colaLeer(); l.push({ accion, datos, ts: Date.now(), u: S.user && S.user.usuario }); colaGuardar(l); bannerRed();
+}
+const colaMia = () => colaLeer().filter(x => !x.u || (S.user && x.u === S.user.usuario));
+
+function bannerRed() {
+  const b = $('#bannerRed'), n = colaMia().length;
+  if (!navigator.onLine) { b.style.display = 'block'; b.innerHTML = '<i class="bi bi-wifi-off"></i> Sin conexión. Tus capturas se guardan en este dispositivo' + (n ? ' (' + n + ' pendientes)' : '') + ' y se enviarán al reconectar. No cierres esta pestaña.'; }
+  else if (sincronizando) { b.style.display = 'block'; b.innerHTML = '<i class="bi bi-arrow-repeat"></i> Sincronizando cambios pendientes…'; }
+  else if (n) { b.style.display = 'block'; b.innerHTML = '<i class="bi bi-cloud-upload"></i> ' + n + ' cambio(s) pendiente(s) de enviar. <a href="#" onclick="sincronizar();return false">Reintentar ahora</a>'; }
+  else b.style.display = 'none';
+}
+function enviarDirecto(accion, datos) {
+  return new Promise(res => {
+    google.script.run.withSuccessHandler(r => res(r || { ok: false, error: 'Sin respuesta', red: true }))
+      .withFailureHandler(e => res({ ok: false, red: true, error: e && e.message })).api(S.token, accion, datos);
+  });
+}
+async function sincronizar() {
+  if (sincronizando || !S.token || !navigator.onLine) return;
+  const lista = colaMia(); if (!lista.length) { bannerRed(); return; }
+  sincronizando = true; bannerRed();
+  let enviados = 0;
+  try {
+    for (const it of lista) {
+      const r = await enviarDirecto(it.accion, it.datos);
+      if (r.red || r.sesion) break;                                           // se reintenta después
+      colaGuardar(colaLeer().filter(x => !(x.ts === it.ts && x.accion === it.accion)));
+      if (r.ok) enviados++; else toast('Un cambio guardado sin conexión no pudo aplicarse: ' + r.error, 'danger');
+    }
+  } finally { sincronizando = false; bannerRed(); }
+  if (enviados) { toast(enviados + ' cambio(s) sincronizado(s)'); if (S.mod === 'asistencia' && typeof cargarAs === 'function' && !Object.keys(S.as.pend).length) cargarAs(false).catch(() => {}); }
+}
+window.addEventListener('online', () => { bannerRed(); sincronizar(); });
+window.addEventListener('offline', bannerRed);
+setInterval(() => { if (colaMia().length) sincronizar(); }, 20000);
+window.addEventListener('beforeunload', ev => { if (colaMia().length) { ev.preventDefault(); ev.returnValue = ''; } });
+</script>

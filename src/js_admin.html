@@ -1,0 +1,168 @@
+<script>
+/* ============================================================================
+ *  ADMINISTRACIÓN: usuarios, permisos, configuración (esquemas, ciclos, respaldos), bitácora y papelera
+ * ========================================================================== */
+
+/* ---------- Usuarios ---------- */
+MODS.usuarios = async () => {
+  const d = S.ud = await llamar('usuarios.listar'), P = S.perm.usuarios, dn = {}; d.docentes.forEach(x => dn[x.DocenteID] = x.Nombre);
+  render('<h2 class="h4 mb-3"><i class="bi bi-person-gear"></i> Usuarios</h2>' + (P.crear ? '<button class="btn btn-primary mb-3" onclick="formUsuario()"><i class="bi bi-plus-lg"></i> Nuevo usuario</button>' : '') +
+    '<div class="table-responsive card"><table class="table table-hover align-middle mb-0"><thead><tr><th>Usuario</th><th>Nombre</th><th class="d-none d-md-table-cell">Correo (Google)</th><th>Rol</th><th class="d-none d-md-table-cell">Docente vinculado</th><th>Estado</th><th></th></tr></thead><tbody>' +
+    d.usuarios.map(u => '<tr><td><code>' + esc(u.Usuario) + '</code></td><td>' + esc(u.Nombre) + '</td><td class="d-none d-md-table-cell small">' + esc(u.Correo) + '</td><td><span class="badge text-bg-' + (u.Rol === 'ADMIN' ? 'danger' : 'primary') + '">' + esc(u.Rol) + '</span></td><td class="d-none d-md-table-cell">' + esc(u.Rol === 'ADMIN' ? 'Todos' : (dn[u.DocenteID] || '—')) + '</td><td>' + badgeAct(u.Activo) + '</td><td class="text-end text-nowrap">' +
+      (P.editar ? btnIco('primary', 'pencil', "formUsuario('" + esc(u.Usuario) + "')", 'Editar') : '') + ' ' + (P.eliminar && u.Usuario !== S.user.usuario ? btnIco('danger', 'trash', "delUsuario('" + esc(u.Usuario) + "')", 'Eliminar') : '') + '</td></tr>').join('') + '</tbody></table></div>' +
+    '<p class="nota text-body-secondary mt-2 mb-0"><i class="bi bi-google"></i> Para iniciar sesión con Google, captura aquí el correo de Google de la persona usuaria.</p>');
+};
+function formUsuario(id) {
+  const d = S.ud, u = id ? d.usuarios.find(x => x.Usuario === id) : { Rol: 'DOCENTE', Activo: true }, nuevo = !id;
+  modal({ titulo: nuevo ? 'Nuevo usuario' : 'Editar usuario', cuerpo: fCampo('f_u', 'Usuario', u.Usuario, 'text', nuevo ? 'autocapitalize="none"' : 'disabled') + fCampo('f_n', 'Nombre completo', u.Nombre) +
+    fCampo('f_co', 'Correo de Google / recuperación de contraseña', u.Correo, 'email') + fSel('f_r', 'Rol', d.roles.map(r => [r, r]), u.Rol) +
+    '<div id="f_dw">' + fSel('f_d', 'Docente vinculado (define qué grupos ve)', [['', '— Ninguno —']].concat(d.docentes.map(x => [x.DocenteID, x.Nombre])), u.DocenteID) + '</div>' +
+    fCampo('f_p', nuevo ? 'Contraseña inicial (mínimo 8 caracteres)' : 'Nueva contraseña (opcional)', '', 'password', 'autocomplete="new-password"') + '<div class="form-text mb-3">El usuario deberá cambiarla al iniciar sesión.</div>' + fSwitch('f_a', 'Activo', u.Activo),
+    onOk: async () => { await llamar('usuarios.guardar', { nuevo, Usuario: nuevo ? val('f_u') : id, Nombre: val('f_n'), Correo: val('f_co'), Rol: val('f_r'), DocenteID: val('f_d'), Password: $('#f_p').value, Activo: $('#f_a').checked }); toast('Usuario guardado'); MODS.usuarios(); } });
+  const ver = () => { $('#f_dw').style.display = $('#f_r').value === 'ADMIN' ? 'none' : ''; }; $('#f_r').onchange = ver; ver();
+}
+async function delUsuario(id) {
+  if (!await confirmar('¿Eliminar al usuario "' + id + '"?')) return;
+  try { await llamar('usuarios.eliminar', { Usuario: id }); toast('Usuario eliminado'); MODS.usuarios(); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ---------- Permisos ---------- */
+MODS.permisos = async () => {
+  const d = S.pd = await llamar('permisos.cargar'); S.pd.rol = S.pd.rol && d.roles.indexOf(S.pd.rol) >= 0 ? S.pd.rol : (d.roles.filter(r => r !== 'ADMIN')[0] || 'ADMIN'); pintarPermisos();
+};
+function pintarPermisos() {
+  const d = S.pd, P = S.perm.permisos, admin = d.rol === 'ADMIN', m = d.matriz[d.rol] || {};
+  render('<h2 class="h4 mb-3"><i class="bi bi-shield-lock"></i> Permisos por rol</h2><div class="card mb-3"><div class="card-body d-flex flex-wrap gap-2 align-items-end"><div><label class="form-label small mb-0" for="pm_r">Rol</label><select id="pm_r" class="form-select">' +
+    d.roles.map(r => '<option' + (r === d.rol ? ' selected' : '') + '>' + esc(r) + '</option>').join('') + '</select></div>' +
+    (P.crear ? '<button class="btn btn-outline-primary" onclick="nuevoRol()"><i class="bi bi-plus-lg"></i> Nuevo rol</button>' : '') + (P.eliminar && !admin ? '<button class="btn btn-outline-danger" onclick="delRol()"><i class="bi bi-trash"></i> Eliminar rol</button>' : '') + '</div></div>' +
+    (admin ? '<div class="alert alert-info">El rol ADMIN siempre tiene acceso total y no puede modificarse.</div>' : '') +
+    '<div class="card"><div class="table-responsive"><table class="table align-middle mb-0 text-center"><thead><tr><th class="text-start">Módulo</th><th>Ver</th><th>Crear</th><th>Editar</th><th>Eliminar</th></tr></thead><tbody>' +
+    Object.keys(d.modulos).map(k => '<tr><td class="text-start">' + esc(d.modulos[k]) + '</td>' + ['ver', 'crear', 'editar', 'eliminar'].map(p => '<td><input type="checkbox" class="form-check-input pm" data-m="' + k + '" data-p="' + p + '" ' + (m[k] && m[k][p] ? 'checked' : '') + ' ' + (admin || !P.editar ? 'disabled' : '') + ' aria-label="' + esc(d.modulos[k] + ' ' + p) + '"></td>').join('') + '</tr>').join('') + '</tbody></table></div>' +
+    (!admin && P.editar ? '<div class="card-footer text-end"><button class="btn btn-primary" onclick="guardarPermisos()"><i class="bi bi-save"></i> Guardar permisos</button></div>' : '') + '</div>');
+  $('#pm_r').onchange = e => { S.pd.rol = e.target.value; pintarPermisos(); };
+  $$('.pm').forEach(c => c.onchange = () => { if (c.dataset.p !== 'ver' && c.checked) $('.pm[data-m="' + c.dataset.m + '"][data-p="ver"]').checked = true; if (c.dataset.p === 'ver' && !c.checked) $$('.pm[data-m="' + c.dataset.m + '"]').forEach(x => x.checked = false); });
+}
+async function guardarPermisos() {
+  const matriz = {}; $$('.pm').forEach(c => { (matriz[c.dataset.m] = matriz[c.dataset.m] || {})[c.dataset.p] = c.checked; });
+  try { await llamar('permisos.guardar', { rol: S.pd.rol, matriz }); toast('Permisos guardados'); MODS.permisos(); } catch (e) { toast(e.message, 'danger'); }
+}
+function nuevoRol() {
+  modal({ titulo: 'Nuevo rol', cuerpo: fCampo('f_r', 'Nombre del rol (ej. COORDINADOR)', '', 'text', 'autocapitalize="characters"'),
+    onOk: async () => { const r = val('f_r').toUpperCase(); await llamar('permisos.guardar', { rol: r, matriz: {} }); S.pd.rol = r; toast('Rol creado: asigna sus permisos'); MODS.permisos(); } });
+}
+async function delRol() {
+  if (!await confirmar('¿Eliminar el rol "' + S.pd.rol + '"?')) return;
+  try { await llamar('permisos.eliminarRol', { rol: S.pd.rol }); toast('Rol eliminado'); S.pd.rol = ''; MODS.permisos(); } catch (e) { toast(e.message, 'danger'); }
+}
+
+/* ---------- Configuración ---------- */
+MODS.config = async () => {
+  const [c, esqs, ciclos] = await Promise.all([llamar('config.cargar'), llamar('esquemas.listar'), llamar('ciclos.listar')]);
+  S.cd = { cfg: c.config, esqs, ciclos }; S.cd.logo = c.logo;
+  const P = S.perm.config, cf = c.config;
+  render('<h2 class="h4 mb-3"><i class="bi bi-gear"></i> Configuración</h2><ul class="nav nav-tabs mb-3" role="tablist">' +
+    [['cfG', 'General'], ['cfA', 'Asistencia y alertas'], ['cfE', 'Esquemas de evaluación'], ['cfC', 'Ciclos escolares'], ['cfR', 'Respaldos']].map((t, i) => '<li class="nav-item"><button class="nav-link' + (i ? '' : ' active') + '" data-bs-toggle="tab" data-bs-target="#' + t[0] + '" data-t="' + t[0] + '">' + t[1] + '</button></li>').join('') + '</ul><div class="tab-content">' +
+    '<div class="tab-pane fade show active" id="cfG"><div class="card"><div class="card-body"><div class="row g-3"><div class="col-12 col-lg-8">' +
+    fCampo('c_i', 'Institución', cf.INSTITUCION) + fCampo('c_e2', 'Encabezado secundario (secretaría / subsistema)', cf.ENCABEZADO2) +
+    '<div class="row"><div class="col-6">' + fCampo('c_cct', 'CCT', cf.CCT) + '</div><div class="col-6">' + fCampo('c_ci', 'Ciclo escolar vigente', cf.CICLO) + '</div></div>' + fCampo('c_d', 'Director(a) (firma de reportes)', cf.DIRECTOR) +
+    '</div><div class="col-12 col-lg-4"><label class="form-label">Logotipo</label><div class="border rounded p-3 text-center mb-2 bg-white"><img id="c_logo" ' + (c.logo ? 'src="' + c.logo + '"' : 'style="display:none"') + ' class="logo-img" alt="Logotipo">' + (c.logo ? '' : '<span class="text-body-secondary small" id="c_nologo">Sin logotipo</span>') + '</div>' +
+    (P.editar ? '<input type="file" id="c_f" class="form-control" accept="image/png,image/jpeg"><div class="form-text">PNG o JPG; se optimiza automáticamente.</div>' : '') + '</div></div></div></div></div>' +
+    '<div class="tab-pane fade" id="cfA"><div class="card"><div class="card-body"><div class="row g-3"><div class="col-12 col-lg-6"><div class="fw-semibold mb-2">Valor de cada estado de asistencia (0 a 1)</div>' +
+    fCampo('c_pr', 'Retardo (fracción de asistencia)', cf.PESO_RETARDO, 'number', 'min="0" max="1" step="0.05"') + fCampo('c_pj', 'Falta justificada', cf.PESO_JUSTIFICADA, 'number', 'min="0" max="1" step="0.05"') + fCampo('c_pp', 'Permiso', cf.PESO_PERMISO, 'number', 'min="0" max="1" step="0.05"') +
+    '<div class="form-text">1 = cuenta como asistencia completa; 0 = cuenta como falta. Al cambiarlo se recalculan todos los resultados.</div></div><div class="col-12 col-lg-6"><div class="fw-semibold mb-2">Alertas y mantenimiento</div>' +
+    fCampo('c_um', 'Umbral de asistencia para marcar riesgo (%)', cf.UMBRAL_ASIS, 'number', 'min="0" max="100"') + fCampo('c_rm', 'Respaldos automáticos que se conservan', cf.RESPALDOS_MAX, 'number', 'min="1" max="60"') + fCampo('c_bd', 'Días que se conserva la bitácora', cf.BITACORA_DIAS, 'number', 'min="30" max="3650"') + '</div></div></div></div></div>' +
+    '<div class="tab-pane fade" id="cfE"><div class="card"><div class="card-body">' + (P.crear ? '<button class="btn btn-primary mb-3" onclick="formEsquema()"><i class="bi bi-plus-lg"></i> Nuevo esquema</button>' : '') +
+    '<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Nombre</th><th>Periodos</th><th>Parciales</th><th>Aprobatoria</th><th>En uso</th><th></th></tr></thead><tbody>' +
+    esqs.map(e => '<tr><td>' + esc(e.Nombre) + '</td><td>' + e.NumPeriodos + ' ' + esc(e.NombrePeriodo.toLowerCase()) + '(s)</td><td>' + e.Parciales + '</td><td>' + e.Aprobatoria + '</td><td>' + e.enUso + '</td><td class="text-end text-nowrap">' + (P.editar ? btnIco('primary', 'pencil', "formEsquema('" + e.EsquemaID + "')", 'Editar') : '') + ' ' + (P.eliminar && e.EsquemaID !== 'E3x2' ? btnIco('danger', 'trash', "delEsquema('" + e.EsquemaID + "')", 'Eliminar') : '') + '</td></tr>').join('') + '</tbody></table></div>' +
+    '<p class="nota text-body-secondary mb-0">Cada asignatura elige su esquema (calendario de periodos y parciales). La calificación del periodo es el promedio de sus parciales y la final es el promedio de los periodos.</p></div></div></div>' +
+    '<div class="tab-pane fade" id="cfC"><div class="card"><div class="card-body"><p class="small text-body-secondary">Al <strong>archivar</strong> un ciclo, su asistencia y calificaciones se mueven a hojas propias (Asistencia_2025_2026…) para que el sistema siga rápido. Los datos siguen consultables y los reportes funcionan; quedan en solo lectura. Puedes reabrirlo cuando quieras.</p>' +
+    '<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Ciclo</th><th>Asignaturas</th><th>Archivadas</th><th></th></tr></thead><tbody>' +
+    ciclos.map(x => '<tr><td>' + esc(x.ciclo) + (x.vigente ? ' <span class="badge text-bg-success">Vigente</span>' : '') + '</td><td>' + x.clases + '</td><td>' + x.archivadas + '</td><td class="text-end">' +
+      (P.editar && !x.vigente ? (x.archivadas < x.clases ? '<button class="btn btn-sm btn-outline-secondary" onclick="cicloAccion(\'archivar\',\'' + esc(x.ciclo) + '\')"><i class="bi bi-archive"></i> Archivar</button>' : '') + (x.archivadas ? ' <button class="btn btn-sm btn-outline-primary" onclick="cicloAccion(\'reabrir\',\'' + esc(x.ciclo) + '\')"><i class="bi bi-box-arrow-up"></i> Reabrir</button>' : '') : '') + '</td></tr>').join('') + '</tbody></table></div></div></div></div>' +
+    '<div class="tab-pane fade" id="cfR"><div class="card"><div class="card-body"><p class="small text-body-secondary">Se hace una copia completa de la base de datos en tu Drive (carpeta <em>Respaldos_Asistencia</em>) todos los días a las 2:00 a. m. y se conservan las más recientes. Para restaurar, abre la copia y reemplaza la hoja de cálculo o copia sus hojas.</p>' +
+    (P.editar ? '<button class="btn btn-primary mb-3" onclick="respaldarAhoraUI()"><i class="bi bi-cloud-arrow-up"></i> Respaldar ahora</button>' : '') + '<div id="rsLista" class="text-body-secondary small">Abre esta pestaña para ver los respaldos.</div></div></div></div></div>' +
+    (P.editar ? '<div class="mt-3"><button class="btn btn-primary" onclick="guardarCfg()"><i class="bi bi-save"></i> Guardar configuración general y de asistencia</button></div>' : ''));
+  const f = $('#c_f'); if (f) f.onchange = subirLogo;
+  $('[data-t="cfR"]').addEventListener('shown.bs.tab', cargarRespaldos);
+};
+async function guardarCfg() {
+  try {
+    await llamar('config.guardar', { INSTITUCION: val('c_i'), ENCABEZADO2: val('c_e2'), CCT: val('c_cct'), CICLO: val('c_ci'), DIRECTOR: val('c_d'),
+      PESO_RETARDO: val('c_pr'), PESO_JUSTIFICADA: val('c_pj'), PESO_PERMISO: val('c_pp'), UMBRAL_ASIS: val('c_um'), RESPALDOS_MAX: val('c_rm'), BITACORA_DIAS: val('c_bd') });
+    toast('Configuración guardada'); await refrescarClases(); $('#navInst').textContent = S.cfg.INSTITUCION;
+  } catch (e) { toast(e.message, 'danger'); }
+}
+function subirLogo(ev) {
+  const file = ev.target.files[0]; if (!file) return;
+  const img = new Image(), url = URL.createObjectURL(file);
+  img.onload = async () => {
+    try {
+      const k = Math.min(1, 300 / img.height, 400 / img.width), cv = document.createElement('canvas'); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+      const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, cv.width, cv.height);
+      let uri = cv.toDataURL('image/png'); if (uri.length > 330000) { cx.globalCompositeOperation = 'destination-over'; cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); uri = cv.toDataURL('image/jpeg', .85); }
+      await llamar('config.logo', { dataUri: uri }); const i = $('#c_logo'); i.src = uri; i.style.display = 'inline-block'; const n = $('#c_nologo'); if (n) n.remove(); S.logo = uri; toast('Logotipo actualizado');
+    } catch (e) { toast(e.message, 'danger'); } finally { URL.revokeObjectURL(url); }
+  };
+  img.onerror = () => toast('No se pudo leer la imagen.', 'danger'); img.src = url;
+}
+function formEsquema(id) {
+  const e = id ? S.cd.esqs.find(x => x.EsquemaID === id) : { NumPeriodos: 3, Parciales: 2, NombrePeriodo: 'Trimestre', Aprobatoria: 6, DecFinal: 1 };
+  modal({ titulo: id ? 'Editar esquema' : 'Nuevo esquema', cuerpo: fCampo('q_n', 'Nombre', e.Nombre, 'text', 'placeholder="Ej. 2 semestres × 1 parcial"') +
+    fSel('q_t', 'Tipo de periodo', ['Trimestre', 'Bimestre', 'Cuatrimestre', 'Semestre', 'Periodo'].map(x => [x, x]), e.NombrePeriodo) +
+    '<div class="row"><div class="col-6">' + fCampo('q_p', 'Número de periodos (1-6)', e.NumPeriodos, 'number', 'min="1" max="6"') + '</div><div class="col-6">' + fCampo('q_pa', 'Parciales por periodo (1-4)', e.Parciales, 'number', 'min="1" max="4"') + '</div></div>' +
+    '<div class="row"><div class="col-6">' + fCampo('q_ap', 'Calificación aprobatoria', e.Aprobatoria, 'number', 'min="0" max="10" step="0.5"') + '</div><div class="col-6">' + fSel('q_d', 'Decimales en la calificación final', [[0, '0'], [1, '1'], [2, '2']], e.DecFinal) + '</div></div>',
+    onOk: async () => { await llamar('esquemas.guardar', { EsquemaID: id, Nombre: val('q_n'), NombrePeriodo: val('q_t'), NumPeriodos: val('q_p'), Parciales: val('q_pa'), Aprobatoria: val('q_ap'), DecFinal: val('q_d') }); toast('Esquema guardado'); await refrescarClases(); MODS.config(); } });
+}
+async function delEsquema(id) {
+  if (!await confirmar('¿Eliminar este esquema?')) return;
+  try { await llamar('esquemas.eliminar', { EsquemaID: id }); toast('Esquema eliminado'); MODS.config(); } catch (e) { toast(e.message, 'danger'); }
+}
+async function cicloAccion(a, ciclo) {
+  if (!await confirmar((a === 'archivar' ? 'Se moverán a hojas propias los datos del ciclo ' : 'Se regresarán a las hojas principales los datos del ciclo ') + ciclo + '. Puede tardar unos segundos. ¿Continuar?', a === 'archivar' ? 'Archivar' : 'Reabrir')) return;
+  try { const r = await llamar('ciclos.' + a, { Ciclo: ciclo }); toast(r.clases + ' asignaturas · ' + r.filas + ' filas movidas'); await refrescarClases(); MODS.config(); } catch (e) { toast(e.message, 'danger'); }
+}
+async function cargarRespaldos() {
+  const el = $('#rsLista'); el.textContent = 'Cargando…';
+  try { const l = await llamar('respaldos.listar'); el.innerHTML = l.length ? '<ul class="list-group">' + l.map(r => '<li class="list-group-item d-flex justify-content-between"><span>' + esc(r.nombre) + '</span><span class="text-body-secondary">' + esc(r.fecha) + ' · <a href="' + esc(r.url) + '" target="_blank" rel="noopener">abrir</a></span></li>').join('') + '</ul>' : 'Aún no hay respaldos.'; }
+  catch (e) { el.innerHTML = '<span class="text-danger">' + esc(e.message) + '</span>'; }
+}
+async function respaldarAhoraUI() { try { await llamar('respaldos.crear'); toast('Respaldo creado'); cargarRespaldos(); } catch (e) { toast(e.message, 'danger'); } }
+
+/* ---------- Bitácora de auditoría ---------- */
+MODS.bitacora = async () => {
+  render('<h2 class="h4 mb-3"><i class="bi bi-clock-history"></i> Bitácora de auditoría</h2><div class="card mb-3"><div class="card-body"><div class="row g-2 align-items-end">' +
+    '<div class="col-6 col-md-2"><label class="form-label small mb-0" for="bt_u">Usuario</label><input id="bt_u" class="form-control form-control-sm"></div>' +
+    '<div class="col-6 col-md-2"><label class="form-label small mb-0" for="bt_h">Hoja</label><select id="bt_h" class="form-select form-select-sm"><option value="">Todas</option>' + ['Estudiantes', 'Asignaciones', 'Docentes', 'Asistencia', 'Calificaciones', 'Actividades', 'Periodos', 'Usuarios', 'Permisos', 'Config', 'Seguimiento', 'Inscripciones', 'Correo', 'Respaldo'].map(h => '<option>' + h + '</option>').join('') + '</select></div>' +
+    '<div class="col-6 col-md-2"><label class="form-label small mb-0" for="bt_d">Desde</label><input type="date" id="bt_d" class="form-control form-control-sm"></div>' +
+    '<div class="col-6 col-md-4"><label class="form-label small mb-0" for="bt_x">Buscar texto</label><input id="bt_x" class="form-control form-control-sm" placeholder="acción, registro, valores…"></div>' +
+    '<div class="col-12 col-md-2"><button class="btn btn-primary btn-sm w-100" onclick="cargarBit()"><i class="bi bi-search"></i> Filtrar</button></div></div></div></div><div id="btLista">' + spinner() + '</div>');
+  ['bt_u', 'bt_x'].forEach(i => $('#' + i).onkeydown = e => { if (e.key === 'Enter') cargarBit(); });
+  cargarBit();
+};
+async function cargarBit() {
+  try {
+    const d = await llamar('bitacora.listar', { usuario: val('bt_u'), hoja: val('bt_h'), desde: val('bt_d'), texto: val('bt_x'), limite: 300 }); S.bt = d.filas;
+    $('#btLista').innerHTML = '<div class="small text-body-secondary mb-1">' + d.filas.length + ' registros mostrados (total en bitácora: ' + d.total + ')</div><div class="card"><div class="table-responsive" style="max-height:70vh"><table class="table table-sm table-hover align-middle mb-0"><thead style="position:sticky;top:0;background:var(--bs-body-bg)"><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Hoja</th><th>Operación</th><th>Registro</th><th>Antes</th><th>Después</th></tr></thead><tbody>' +
+      (d.filas.map((f, i) => '<tr><td class="text-nowrap small">' + esc(f.Fecha) + '</td><td>' + esc(f.Usuario) + '</td><td class="small">' + esc(f.Accion) + '</td><td>' + esc(f.Hoja) + '</td><td><span class="badge text-bg-' + (/BAJA/.test(f.Operacion) ? 'danger' : f.Operacion === 'ALTA' || f.Operacion === 'ALTA_MASIVA' ? 'success' : f.Operacion === 'EVENTO' ? 'secondary' : 'primary') + '">' + esc(f.Operacion) + '</span></td><td class="small">' + esc(f.Registro) + '</td>' +
+        '<td><div class="json-aud" role="button" onclick="verBit(' + i + ')">' + esc(f.Antes) + '</div></td><td><div class="json-aud" role="button" onclick="verBit(' + i + ')">' + esc(f.Despues) + '</div></td></tr>').join('') || '<tr><td colspan="8" class="text-center text-body-secondary py-4">Sin registros con esos filtros.</td></tr>') + '</tbody></table></div></div>';
+  } catch (e) { $('#btLista').innerHTML = '<div class="alert alert-danger">' + esc(e.message) + '</div>'; }
+}
+function verBit(i) {
+  const f = S.bt[i], pr = t => { try { return JSON.stringify(JSON.parse(t), null, 2); } catch (e) { return t; } };
+  modal({ titulo: f.Operacion + ' · ' + f.Hoja + ' · ' + f.Registro, size: 'modal-lg', cuerpo: '<div class="small mb-2">' + esc(f.Fecha) + ' · ' + esc(f.Usuario) + ' · ' + esc(f.Accion) + '</div><div class="row"><div class="col-md-6"><div class="fw-semibold">Valor anterior</div><pre class="json-aud" style="max-width:none;max-height:none">' + esc(pr(f.Antes) || '—') + '</pre></div><div class="col-md-6"><div class="fw-semibold">Valor nuevo</div><pre class="json-aud" style="max-width:none;max-height:none">' + esc(pr(f.Despues) || '—') + '</pre></div></div>' });
+}
+
+/* ---------- Papelera ---------- */
+MODS.papelera = async () => {
+  const d = S.pp = await llamar('papelera.listar'), P = S.perm.papelera;
+  render('<h2 class="h4 mb-3"><i class="bi bi-trash3"></i> Papelera</h2><p class="text-body-secondary small">Aquí están los elementos eliminados. Al restaurarlos recuperas también su asistencia y calificaciones.</p><div class="table-responsive card"><table class="table align-middle mb-0"><thead><tr><th>Tipo</th><th>Elemento</th><th class="d-none d-md-table-cell">Detalle</th><th>Eliminado</th><th></th></tr></thead><tbody>' +
+    (d.items.map((x, i) => '<tr><td><span class="badge text-bg-secondary">' + esc(x.tipo) + '</span></td><td>' + esc(x.titulo) + '</td><td class="d-none d-md-table-cell small">' + esc(x.detalle) + '</td><td class="small text-nowrap">' + esc(x.eliminado) + '</td><td class="text-end text-nowrap">' +
+      (P.editar ? '<button class="btn btn-sm btn-outline-success" onclick="restaurarItem(' + i + ')"><i class="bi bi-arrow-counterclockwise"></i> Restaurar</button> ' : '') + (d.puedePurgar && P.eliminar ? '<button class="btn btn-sm btn-outline-danger" onclick="purgarItem(' + i + ')" title="Eliminar definitivamente"><i class="bi bi-x-octagon"></i></button>' : '') + '</td></tr>').join('') || '<tr><td colspan="5" class="text-center text-body-secondary py-4">La papelera está vacía.</td></tr>') + '</tbody></table></div>');
+};
+async function restaurarItem(i) { const x = S.pp.items[i]; try { await llamar('papelera.restaurar', { tipo: x.tipo, id: x.id }); toast('Elemento restaurado'); await refrescarClases(); MODS.papelera(); } catch (e) { toast(e.message, 'danger'); } }
+async function purgarItem(i) {
+  const x = S.pp.items[i];
+  if (!await confirmar('Se eliminará DEFINITIVAMENTE "' + x.titulo + '" y todos sus datos relacionados. Esta acción no se puede deshacer.', 'Eliminar definitivamente')) return;
+  try { await llamar('papelera.purgar', { tipo: x.tipo, id: x.id }); toast('Eliminado definitivamente'); MODS.papelera(); } catch (e) { toast(e.message, 'danger'); }
+}
+</script>

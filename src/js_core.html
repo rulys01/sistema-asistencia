@@ -1,0 +1,206 @@
+<script>
+/* ============================================================================
+ *  NÚCLEO DE LA INTERFAZ: utilidades, llamadas al servidor, modal, menú y barra de contexto
+ * ========================================================================== */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fx = v => String(Math.round(Number(v) * 100) / 100);                                   // 8 | 8.5 | 8.25
+const f1 = v => (Math.round((Number(v) + 1e-9) * 10) / 10).toFixed(1);
+const ORD = ['Primer', 'Segundo', 'Tercer', 'Cuarto', 'Quinto', 'Sexto', 'Séptimo', 'Octavo'];
+const nomPer = (c, t) => ORD[t - 1] + ' ' + String((c.Esquema && c.Esquema.NombrePeriodo) || 'Trimestre').toLowerCase();
+const nomParc = p => ORD[p - 1] + ' parcial';
+/** Estados de asistencia: [valor, etiqueta, icono, color] */
+const ESTADOS = [[1, 'Presente', 'check-lg', 'success'], ['R', 'Retardo', 'clock', 'warning'], ['J', 'Justificada', 'file-earmark-check', 'info'],
+                 ['PM', 'Permiso', 'door-open', 'primary'], [0, 'Falta', 'x-lg', 'danger']];
+const simAs = v => v === 1 ? 'A' : v === 0 ? 'F' : (v || '');
+const S = { token: null, user: null, perm: {}, cfg: {}, logo: '', clases: [], esqs: [], ctx: { ciclo: '', claseId: '', t: 1, p: 1 }, mod: 'inicio',
+            timer: null, as: { pend: {}, ver: 0, fecha: '' }, ac: { pend: {} }, es: {}, rp: { tipo: 'formativa' }, seg: {} };
+const MODS = {};
+let ocupado = 0;
+
+function cargando(d) { ocupado = Math.max(0, ocupado + d); $('#barra').style.display = ocupado ? 'block' : 'none'; }
+function toast(msg, tipo = 'success') {
+  const e = document.createElement('div');
+  e.className = 'toast align-items-center text-bg-' + tipo + ' border-0'; e.setAttribute('role', 'alert');
+  e.innerHTML = '<div class="d-flex"><div class="toast-body">' + esc(msg) + '</div><button class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Cerrar"></button></div>';
+  $('#toasts').appendChild(e);
+  e.addEventListener('hidden.bs.toast', () => e.remove());
+  new bootstrap.Toast(e, { delay: tipo === 'danger' ? 6000 : 3000 }).show();
+}
+window.addEventListener('unhandledrejection', ev => { toast((ev.reason && ev.reason.message) || 'Ocurrió un error.', 'danger'); });
+
+/* ---------- Llamadas al servidor ---------- */
+const ENCOLABLES = { 'asistencia.guardar': 1, 'actividades.guardarCalif': 1 };       // se guardan en el dispositivo si no hay red
+const esRed = e => !navigator.onLine || /network|fetch|timeout|timed out|offline|conexi|ERR_/i.test((e && e.message) || '');
+
+/** Llamada al servidor (personal autenticado). Las capturas se encolan si se pierde la conexión. */
+function llamar(accion, datos, silencioso) {
+  return new Promise((res, rej) => {
+    datos = datos || {};
+    if (ENCOLABLES[accion] && !navigator.onLine) { colaAgregar(accion, datos); return res({ encolado: true }); }
+    if (!silencioso) cargando(1);
+    google.script.run
+      .withSuccessHandler(r => {
+        if (!silencioso) cargando(-1);
+        if (r && r.ok) return res(r.data);
+        if (r && r.sesion) { toast('Tu sesión expiró. Inicia sesión de nuevo.', 'warning'); salir(true); }
+        rej(new Error(r ? r.error : 'Sin respuesta del servidor.'));
+      })
+      .withFailureHandler(e => {
+        if (!silencioso) cargando(-1);
+        if (ENCOLABLES[accion] && esRed(e)) { colaAgregar(accion, datos); return res({ encolado: true }); }
+        rej(new Error((e && e.message) || 'Error de comunicación.'));
+      })
+      .api(S.token, accion, datos);
+  });
+}
+/** Llamada a funciones públicas (login, recuperación, invitado). */
+const pub = (fn, ...a) => new Promise((res, rej) => {
+  cargando(1);
+  google.script.run.withSuccessHandler(r => { cargando(-1); res(r); })
+    .withFailureHandler(e => { cargando(-1); rej(new Error((e && e.message) || 'Error de comunicación.')); })[fn](...a);
+});
+
+/* ---------- Tema claro / oscuro ---------- */
+function setTema(t) {
+  document.documentElement.setAttribute('data-bs-theme', t);
+  try { localStorage.setItem('tema', t); } catch (e) {}
+  $$('.ico-tema').forEach(i => i.className = 'ico-tema bi bi-' + (t === 'dark' ? 'sun-fill' : 'moon-stars-fill'));
+}
+const alternarTema = () => setTema(document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark');
+(function () {
+  let t = null; try { t = localStorage.getItem('tema'); } catch (e) {}
+  if (!t) t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-bs-theme', t);
+})();
+
+/* ---------- Modal ---------- */
+let mdl = null;
+function modal(o) {
+  const el = $('#mdl');
+  if (mdl) { try { mdl.dispose(); } catch (e) {} }
+  $('#mdlTitulo').textContent = o.titulo;
+  $('#mdlCuerpo').innerHTML = o.cuerpo;
+  $('#mdlDlg').className = 'modal-dialog modal-dialog-scrollable ' + (o.size || '');
+  const b = $('#mdlOk');
+  b.className = 'btn btn-' + (o.okClase || 'primary'); b.textContent = o.ok || 'Guardar'; b.style.display = o.onOk ? '' : 'none'; b.disabled = false;
+  $('#mdlCancel').textContent = o.onOk ? 'Cancelar' : 'Cerrar'; $('#mdlCancel').style.display = '';
+  mdl = new bootstrap.Modal(el, { backdrop: o.estatico ? 'static' : true, keyboard: !o.estatico });
+  b.onclick = async () => {
+    b.disabled = true;
+    try { const r = await o.onOk(); if (r !== false) mdl.hide(); }
+    catch (e) { toast(e.message, 'danger'); }
+    finally { b.disabled = false; }
+  };
+  mdl.show();
+}
+const cerrarMdl = () => { if (mdl) mdl.hide(); };
+function confirmar(msg, btn = 'Eliminar') {
+  return new Promise(res => {
+    let si = false;
+    modal({ titulo: 'Confirmar', cuerpo: '<p class="mb-0">' + esc(msg) + '</p>', ok: btn, okClase: 'danger', onOk: () => { si = true; } });
+    $('#mdl').addEventListener('hidden.bs.modal', () => res(si), { once: true });
+  });
+}
+/** Vista previa de un documento HTML con botón de impresión (credenciales, boletas…). */
+function vistaHtml(titulo, html) {
+  modal({ titulo, size: 'modal-xl', cuerpo: '<iframe id="vhFrame" style="width:100%;height:70vh;border:0;background:#fff" title="Vista previa"></iframe>',
+          ok: 'Imprimir', onOk: () => { const w = $('#vhFrame').contentWindow; w.focus(); w.print(); return false; } });
+  $('#vhFrame').srcdoc = html;
+}
+
+/* ---------- Campos de formulario ---------- */
+const fCampo = (id, lbl, v = '', t = 'text', x = '') => '<div class="mb-3"><label class="form-label" for="' + id + '">' + lbl + '</label><input id="' + id + '" type="' + t + '" class="form-control" value="' + esc(v) + '" ' + x + '></div>';
+const fArea = (id, lbl, v = '', filas = 3, x = '') => '<div class="mb-3"><label class="form-label" for="' + id + '">' + lbl + '</label><textarea id="' + id + '" class="form-control" rows="' + filas + '" ' + x + '>' + esc(v) + '</textarea></div>';
+const fSel = (id, lbl, opts, v) => '<div class="mb-3"><label class="form-label" for="' + id + '">' + lbl + '</label><select id="' + id + '" class="form-select">' +
+  opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(v) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select></div>';
+const fSwitch = (id, lbl, on) => '<div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '><label class="form-check-label" for="' + id + '">' + lbl + '</label></div>';
+const val = id => $('#' + id).value.trim();
+const render = h => { $('#contenido').innerHTML = h; window.scrollTo(0, 0); };
+const spinner = () => '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>';
+const badgeAct = a => a ? '<span class="badge text-bg-success">Activo</span>' : '<span class="badge text-bg-secondary">Inactivo</span>';
+const btnIco = (cls, ico, fn, tit) => '<button class="btn btn-sm btn-outline-' + cls + '" onclick="' + fn + '" title="' + tit + '" aria-label="' + tit + '"><i class="bi bi-' + ico + '"></i></button>';
+const claseTxt = c => c.Asignatura + ' · ' + c.Grado + ' ' + c.Grupo;
+const hoyISO = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const fechaDe = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+const fechaCorta = iso => fechaDe(iso).toLocaleDateString('es-MX', { weekday: 'short', day: '2-digit', month: '2-digit' });
+const fechaLarga = iso => fechaDe(iso).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const sumaDias = (iso, n) => { const d = fechaDe(iso); d.setDate(d.getDate() + n); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const colorCal = (v, apr = 6) => v == null ? 'secondary' : v < apr ? 'danger' : v < 8 ? 'warning' : 'success';
+const sigCiclo = c => String(c || '').replace(/\d{4}/g, y => String(+y + 1));
+
+/* ---------- Archivos, Excel y QR ---------- */
+function b64ABlob(b64, mime) { const bin = atob(b64), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: mime }); }
+function descargarBlob(blob, nombre) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function descargarXlsx(aoa, hoja, nombre) {
+  const ws = XLSX.utils.aoa_to_sheet(aoa), wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, String(hoja).replace(/[\\\/?*\[\]:]/g, ' ').slice(0, 31));
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  descargarBlob(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), nombre + '.xlsx');
+}
+function leerArchivoB64(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(new Error('No se pudo leer el archivo.')); r.readAsDataURL(file); });
+}
+const qrSvg = texto => { const q = qrcode(0, 'M'); q.addData(texto); q.make(); return q.createSvgTag(4, 2); };
+
+/* ============================ MENÚ / NAVEGACIÓN ============================ */
+const MENU = [['inicio', 'house', 'Inicio', null], ['docentes', 'person-badge', 'Docentes y asignaturas', 'docentes'],
+  ['estudiantes', 'people', 'Estudiantes', 'estudiantes'], ['asistencia', 'calendar-check', 'Asistencia', 'asistencia'],
+  ['actividades', 'journal-check', 'Actividades y calificaciones', 'actividades'], ['reportes', 'file-earmark-text', 'Reportes', 'reportes'],
+  ['seguimiento', 'journal-text', 'Seguimiento', 'seguimiento'], ['comunicacion', 'envelope-paper', 'Notificar a tutores', 'comunicacion'],
+  ['usuarios', 'person-gear', 'Usuarios', 'usuarios'], ['permisos', 'shield-lock', 'Permisos', 'permisos'],
+  ['bitacora', 'clock-history', 'Bitácora', 'bitacora'], ['papelera', 'trash3', 'Papelera', 'papelera'], ['config', 'gear', 'Configuración', 'config']];
+
+async function vaciarTodo() { if (typeof vaciarAs === 'function') await vaciarAs(); if (typeof guardarAc === 'function') await guardarAc(); }
+
+async function ir(m) {
+  try { await vaciarTodo(); } catch (e) { toast(e.message, 'danger'); }
+  clearInterval(S.timer); S.timer = null; S.mod = m;
+  if (typeof detenerQR === 'function') detenerQR();
+  $$('#menu .menu-link').forEach(a => a.classList.toggle('active', a.dataset.m === m));
+  const oc = bootstrap.Offcanvas.getInstance($('#sidebar')); if (oc) oc.hide();
+  render(spinner());
+  try { await MODS[m](); } catch (e) { render('<div class="alert alert-danger">' + esc(e.message) + '</div>'); }
+}
+async function refrescarClases() { const d = await llamar('init'); S.clases = d.clases; S.esqs = d.esquemas; S.cfg = d.config; }
+
+/* ---------- Barra de contexto: ciclo, asignatura/grupo, periodo y parcial ---------- */
+const claseActual = () => S.clases.find(c => c.ClaseID === S.ctx.claseId);
+/** Permisos del módulo; en un ciclo archivado todo queda en solo lectura. */
+function permC(mod) { const p = S.perm[mod], c = claseActual(); return (c && c.Archivada) ? { ver: p.ver, crear: false, editar: false, eliminar: false } : p; }
+function barraCtx() {
+  if (!S.clases.length) return '<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> No tienes asignaturas asignadas. Registra una en <strong>Docentes y asignaturas</strong>.</div>';
+  const ciclos = Array.from(new Set(S.clases.map(c => c.Ciclo))).sort().reverse();
+  if (ciclos.indexOf(S.ctx.ciclo) < 0) S.ctx.ciclo = ciclos.indexOf(S.cfg.CICLO) >= 0 ? S.cfg.CICLO : ciclos[0];
+  const lista = S.clases.filter(c => c.Ciclo === S.ctx.ciclo);
+  if (!lista.some(c => c.ClaseID === S.ctx.claseId)) S.ctx.claseId = lista[0].ClaseID;
+  const c = claseActual(), esq = c.Esquema;
+  if (S.ctx.t > esq.NumPeriodos) S.ctx.t = 1;
+  if (S.ctx.p > esq.Parciales) S.ctx.p = 1;
+  const rango = n => Array.from({ length: n }, (_, i) => i + 1);
+  return '<div class="card mb-3"><div class="card-body py-2"><div class="row g-2">' +
+    '<div class="col-12 col-md-2"><label class="form-label small mb-0" for="cx_ci">Ciclo escolar</label><select id="cx_ci" class="form-select form-select-sm">' +
+    ciclos.map(x => '<option' + (x === S.ctx.ciclo ? ' selected' : '') + '>' + esc(x) + '</option>').join('') + '</select></div>' +
+    '<div class="col-12 col-md-5"><label class="form-label small mb-0" for="cx_c">Asignatura · grado y grupo' + (c.Archivada ? ' <span class="badge text-bg-secondary">archivado: solo lectura</span>' : '') + '</label><select id="cx_c" class="form-select form-select-sm">' +
+    lista.map(x => '<option value="' + x.ClaseID + '"' + (x.ClaseID === c.ClaseID ? ' selected' : '') + '>' + esc(claseTxt(x) + (S.user.rol === 'ADMIN' && x.Docente ? ' — ' + x.Docente : '')) + '</option>').join('') + '</select></div>' +
+    '<div class="col-6 col-md-3"><label class="form-label small mb-0" for="cx_t">' + esc(esq.NombrePeriodo) + '</label><select id="cx_t" class="form-select form-select-sm">' +
+    rango(esq.NumPeriodos).map(i => '<option value="' + i + '"' + (S.ctx.t === i ? ' selected' : '') + '>' + nomPer(c, i) + '</option>').join('') + '</select></div>' +
+    '<div class="col-6 col-md-2"><label class="form-label small mb-0" for="cx_p">Parcial</label><select id="cx_p" class="form-select form-select-sm">' +
+    rango(esq.Parciales).map(i => '<option value="' + i + '"' + (S.ctx.p === i ? ' selected' : '') + '>' + nomParc(i) + '</option>').join('') + '</select></div>' +
+    '</div></div></div>';
+}
+function bindCtx() {
+  const ch = async (reiniciaClase) => {
+    try { await vaciarTodo(); } catch (e) { toast(e.message, 'danger'); }
+    S.ctx = { ciclo: $('#cx_ci').value, claseId: reiniciaClase ? '' : $('#cx_c').value, t: +$('#cx_t').value, p: +$('#cx_p').value };
+    ir(S.mod);
+  };
+  const ci = $('#cx_ci'); if (ci) ci.onchange = () => ch(true);
+  ['cx_c', 'cx_t', 'cx_p'].forEach(i => { const e = $('#' + i); if (e) e.onchange = () => ch(false); });
+}
+const ctxP = () => ({ ClaseID: S.ctx.claseId, Trimestre: S.ctx.t, Parcial: S.ctx.p });
+</script>

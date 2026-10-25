@@ -1,0 +1,151 @@
+<script>
+/* ============================================================================
+ *  ACTIVIDADES Y CALIFICACIONES: captura tipo hoja de cálculo, importación y exportación Excel/CSV
+ * ========================================================================== */
+MODS.actividades = async () => {
+  if (!S.clases.length) return render(barraCtx());
+  S.ac.pend = {};
+  render(barraCtx() + '<div id="acBody">' + spinner() + '</div>'); bindCtx();
+  await cargarAc();
+};
+async function cargarAc() { S.ac.d = await llamar('actividades.cargar', ctxP()); pintarAc(); }
+
+function pintarAc() {
+  const d = S.ac.d, P = permC('actividades'), c = claseActual();
+  if (!d.per) {
+    $('#acBody').innerHTML = '<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Este parcial aún no está configurado. ' +
+      (S.perm.asistencia && S.perm.asistencia.editar && !c.Archivada ? '<button class="btn btn-sm btn-warning ms-2" onclick="formPeriodo(null, cargarAc)">Configurar ahora</button>' : 'Pide a un usuario con permiso que lo configure en Asistencia.') + '</div>';
+    return;
+  }
+  const gen = d.acts.filter(a => a.Categoria === 'GENERAL'), lib = d.acts.filter(a => a.Categoria === 'LIBRETA'), acts = gen.concat(lib);
+  const th = a => '<th ' + (P.editar ? 'role="button" onclick="formAct(\'' + a.ActID + '\')" title="Editar actividad"' : '') + '>' + esc(a.Nombre) + '<div class="small fw-normal opacity-75">máx. ' + fx(a.Max) + '</div></th>';
+  $('#acBody').innerHTML =
+    '<div class="card mb-3"><div class="card-body py-2 d-flex flex-wrap gap-2 align-items-center justify-content-between">' +
+    '<div class="small"><span class="badge text-bg-primary me-1">Asistencia ' + fx(d.pesoAsis) + ' pts</span><span class="badge text-bg-info me-1">Generales ' + fx(d.pesoGen) + ' pts (con asistencia)</span><span class="badge text-bg-secondary">Libreta/actividades ' + fx(d.pesoLib) + ' pts</span>' +
+    ' <span id="acEstado" class="ms-2 text-body-secondary"></span></div><div class="d-flex flex-wrap gap-2">' +
+    (P.crear ? '<button class="btn btn-sm btn-primary" onclick="formAct()"><i class="bi bi-plus-lg"></i> Actividad</button>' : '') +
+    (P.crear && !d.acts.length ? '<button class="btn btn-sm btn-outline-primary" onclick="plantillaAct()"><i class="bi bi-magic"></i> Usar plantilla</button>' : '') +
+    (P.editar && d.acts.length ? '<button class="btn btn-sm btn-outline-success" onclick="formImportarCalif()"><i class="bi bi-file-earmark-arrow-up"></i> Importar Excel/CSV</button>' : '') +
+    (d.acts.length ? '<button class="btn btn-sm btn-outline-secondary" onclick="exportarCalif()"><i class="bi bi-file-earmark-excel"></i> Exportar Excel</button>' : '') +
+    '</div></div></div>' +
+    (!d.acts.length ? '<div class="alert alert-info">Aún no hay actividades en este parcial. Agrega las tuyas o usa la plantilla (Participación, Disciplina, Examen).</div>' :
+    '<div class="card"><div class="table-responsive" style="max-height:70vh"><table class="table table-sm table-bordered tabla-cal mb-0"><thead style="position:sticky;top:0;z-index:3"><tr><th class="nm">Estudiante</th><th title="' + esc('Asistencias evaluadas: ' + d.total) + '">Asistencia<div class="small fw-normal opacity-75">' + fx(d.pesoAsis) + ' pts</div></th>' +
+    acts.map(th).join('') + '<th>Libreta<div class="small fw-normal opacity-75">' + fx(d.pesoLib) + ' pts</div></th><th>Calif.</th><th>Observaciones</th></tr></thead><tbody>' +
+    d.filas.map(f => '<tr data-e="' + f.EstID + '"><td class="nm">' + f.NumLista + '. ' + esc(f.Nombre) + '</td><td><span class="badge text-bg-light border" title="' + f.faltas + ' faltas · ' + f.retardos + ' ret. · ' + f.justificadas + ' just. · ' + f.permisos + ' perm.">' + fx(f.ptsAsis) + '</span></td>' +
+      acts.map(a => '<td><input class="form-control form-control-sm calif" inputmode="decimal" data-e="' + f.EstID + '" data-a="' + a.ActID + '" data-max="' + a.Max + '" value="' + esc(f.vals[a.ActID]) + '" ' + (P.editar ? '' : 'disabled') + ' aria-label="' + esc(a.Nombre + ' de ' + f.Nombre) + '"></td>').join('') +
+      '<td class="cl">' + fx(f.califL) + '</td><td class="gr"></td><td><input class="form-control form-control-sm obs" style="min-width:160px" maxlength="300" data-e="' + f.EstID + '" value="' + esc(f.obs) + '" ' + (P.editar ? '' : 'disabled') + ' aria-label="Observaciones"></td></tr>').join('') +
+      '</tbody></table></div></div>');
+  d.filas.forEach(f => pintarGral(f.EstID));
+  $$('#acBody input.calif').forEach(i => i.oninput = onCalif);
+  $$('#acBody input.obs').forEach(i => i.oninput = onObs);
+}
+function filaAc(id) { return S.ac.d.filas.find(f => f.EstID === id); }
+function pintarGral(id) {
+  const d = S.ac.d, f = filaAc(id), tr = $('#acBody tr[data-e="' + id + '"]'); if (!tr) return;
+  let sg = 0, sl = 0;
+  d.acts.forEach(a => { const v = Math.max(0, Math.min(a.Max, Number(f.vals[a.ActID]) || 0)); if (a.Categoria === 'GENERAL') sg += v; else sl += v; });
+  const ptsL = d.maxLib > 0 ? sl * d.pesoLib / d.maxLib : 0, g = (f.ptsAsis + sg + ptsL) / 10;
+  tr.querySelector('.cl').textContent = fx(ptsL);
+  tr.querySelector('.gr').innerHTML = '<span class="badge text-bg-' + colorCal(g, d.aprobatoria) + '">' + f1(g) + '</span>';
+}
+function onCalif(ev) {
+  const i = ev.target, max = Number(i.dataset.max), raw = i.value.trim().replace(',', '.'), v = raw === '' ? '' : Number(raw);
+  const mal = raw !== '' && (isNaN(v) || v < 0 || v > max);
+  i.classList.toggle('is-invalid', mal); i.title = mal ? 'Debe estar entre 0 y ' + max : '';
+  if (mal) return;
+  filaAc(i.dataset.e).vals[i.dataset.a] = v; pintarGral(i.dataset.e);
+  S.ac.pend[i.dataset.e + '|' + i.dataset.a] = { EstID: i.dataset.e, ActID: i.dataset.a, Valor: v };
+  programarAc();
+}
+function onObs(ev) {
+  const i = ev.target; filaAc(i.dataset.e).obs = i.value;
+  S.ac.pend[i.dataset.e + '|OBS'] = { EstID: i.dataset.e, ActID: 'OBS', Valor: i.value }; programarAc();
+}
+const estadoAc = t => { const e = $('#acEstado'); if (e) e.innerHTML = t; };
+function programarAc() { estadoAc('Guardando…'); clearTimeout(S.ac.t); S.ac.t = setTimeout(() => guardarAc().catch(() => {}), 700); }
+async function guardarAc() {
+  clearTimeout(S.ac.t);
+  const pend = S.ac.pend, items = Object.keys(pend).map(k => pend[k]);
+  if (!items.length) return;
+  S.ac.pend = {};
+  try {
+    const r = await llamar('actividades.guardarCalif', Object.assign(ctxP(), { items }), true);
+    estadoAc(r && r.encolado ? '<i class="bi bi-cloud-slash text-warning"></i> Guardado en el dispositivo (pendiente de enviar)' : '<i class="bi bi-check-circle text-success"></i> Guardado ' + new Date().toLocaleTimeString('es-MX'));
+  } catch (e) { items.forEach(it => { const k = it.EstID + '|' + it.ActID; if (!S.ac.pend[k]) S.ac.pend[k] = it; }); estadoAc('<i class="bi bi-exclamation-triangle text-danger"></i> No guardado'); toast(e.message, 'danger'); throw e; }
+}
+
+/* ---------- Actividades ---------- */
+function formAct(id) {
+  const d = S.ac.d, a = id ? d.acts.find(x => x.ActID === id) : { Categoria: 'GENERAL', Max: 10 };
+  modal({ titulo: id ? 'Editar actividad' : 'Nueva actividad',
+    cuerpo: fCampo('f_n', 'Nombre', a.Nombre) + fSel('f_c', 'Tipo', [['GENERAL', 'Criterio general (suma puntos directos)'], ['LIBRETA', 'Libreta / actividad (se ajusta al peso restante)']], a.Categoria) +
+      fCampo('f_m', 'Valor máximo (puntos)', a.Max, 'number', 'min="1" max="100" step="0.5"') +
+      '<div class="form-text">Asistencia ' + fx(d.pesoAsis) + ' + criterios generales ≤ 100. Lo restante se reparte entre la libreta y las actividades.</div>' +
+      (id && permC('actividades').eliminar ? '<button type="button" class="btn btn-outline-danger btn-sm mt-3" onclick="delAct(\'' + id + '\')"><i class="bi bi-trash"></i> Eliminar actividad</button>' : ''),
+    onOk: async () => { await guardarAc(); await llamar('actividades.guardarAct', Object.assign(ctxP(), { ActID: id, Nombre: val('f_n'), Categoria: val('f_c'), Max: val('f_m') })); toast('Actividad guardada'); cargarAc(); } });
+}
+async function delAct(id) {
+  cerrarMdl(); await new Promise(r => setTimeout(r, 400));
+  if (!await confirmar('La actividad se enviará a la papelera (sus calificaciones se conservan). ¿Continuar?')) return;
+  try { await llamar('actividades.eliminarAct', Object.assign(ctxP(), { ActID: id })); toast('Actividad enviada a la papelera'); cargarAc(); } catch (e) { toast(e.message, 'danger'); }
+}
+async function plantillaAct() { try { await llamar('actividades.plantilla', ctxP()); toast('Plantilla aplicada'); cargarAc(); } catch (e) { toast(e.message, 'danger'); } }
+
+/* ---------- Exportar a Excel ---------- */
+function exportarCalif() {
+  const d = S.ac.d, c = claseActual(), acts = d.acts;
+  const aoa = [['No.', 'Matrícula', 'Estudiante'].concat(acts.map(a => a.Nombre + ' (máx ' + fx(a.Max) + ')')).concat(['Calificación', 'Observaciones'])];
+  d.filas.forEach(f => aoa.push([f.NumLista, f.Matricula, f.Nombre].concat(acts.map(a => f.vals[a.ActID] === '' ? '' : Number(f.vals[a.ActID]))).concat([Math.round(f.gral * 10) / 10, f.obs])));
+  descargarXlsx(aoa, 'Calificaciones', 'Calificaciones_' + c.Asignatura.replace(/\W+/g, '_') + '_' + c.Grado + c.Grupo + '_' + S.ctx.t + 'T' + S.ctx.p + 'P');
+}
+
+/* ---------- Importar desde Excel / CSV ---------- */
+const normTxt = s => String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s*\(m[a]x[^)]*\)\s*$/i, '').replace(/\s+/g, ' ').trim();
+function formImportarCalif() {
+  modal({ titulo: 'Importar calificaciones', size: 'modal-lg', ok: 'Importar', onOk: ejecutarImportCalif,
+    cuerpo: '<p class="small text-body-secondary">El archivo debe tener una fila de encabezados. Para identificar al estudiante usa la columna <strong>Matrícula</strong>, <strong>No.</strong> (de lista) o <strong>Estudiante</strong>. Las demás columnas se asocian por nombre a las actividades de este parcial (ej. “Examen”). Descarga primero “Exportar Excel” para obtener el formato.</p>' +
+      '<input type="file" id="ic_f" class="form-control" accept=".xlsx,.xls,.csv,text/csv"><div id="ic_prev" class="mt-3 small"></div>' });
+  S.ac.imp = null; $('#mdlOk').disabled = true;
+  $('#ic_f').onchange = async ev => {
+    const f = ev.target.files[0]; if (!f) return;
+    try {
+      const wb = /\.csv$/i.test(f.name) ? XLSX.read(await f.text(), { type: 'string' }) : XLSX.read(await f.arrayBuffer(), { type: 'array' });
+      analizarFilasCalif(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' }));
+    } catch (e) { $('#ic_prev').innerHTML = '<div class="alert alert-danger">No se pudo leer el archivo: ' + esc(e.message) + '</div>'; }
+  };
+}
+function analizarFilasCalif(rows) {
+  const d = S.ac.d, hi = rows.findIndex(r => r.some(x => String(x).trim() !== ''));
+  if (hi < 0) return $('#ic_prev').innerHTML = '<div class="alert alert-danger">El archivo está vacío.</div>';
+  const enc = rows[hi].map(normTxt);
+  const cNum = enc.findIndex(h => /^(no\.?|num|numero|n°|lista|no de lista)$/.test(h)), cMat = enc.findIndex(h => /matricula|registro/.test(h)), cNom = enc.findIndex(h => /^(estudiante|alumno|nombre)/.test(h));
+  if (cNum < 0 && cMat < 0 && cNom < 0) return $('#ic_prev').innerHTML = '<div class="alert alert-danger">No encontré columnas de identificación (Matrícula, No. o Estudiante).</div>';
+  const colAct = {}; d.acts.forEach(a => { const i = enc.indexOf(normTxt(a.Nombre)); if (i >= 0) colAct[a.ActID] = i; });
+  const nA = Object.keys(colAct).length; if (!nA) return $('#ic_prev').innerHTML = '<div class="alert alert-danger">Ninguna columna coincide con las actividades de este parcial.</div>';
+  const items = []; let sinEst = 0, fuera = 0, ok = 0;
+  rows.slice(hi + 1).forEach(r => {
+    if (r.every(x => String(x).trim() === '')) return;
+    const m = cMat >= 0 && String(r[cMat]).trim() ? String(r[cMat]).trim().toUpperCase() : '', n = cNum >= 0 ? String(r[cNum]).trim() : '', nm = cNom >= 0 ? normTxt(r[cNom]) : '';
+    const f = d.filas.find(x => (m && String(x.Matricula).toUpperCase() === m) || (!m && n && String(x.NumLista) === n) || (!m && !n && nm && normTxt(x.Nombre) === nm));
+    if (!f) { sinEst++; return; }
+    ok++;
+    d.acts.forEach(a => {
+      if (colAct[a.ActID] === undefined) return;
+      const raw = String(r[colAct[a.ActID]]).trim().replace(',', '.');
+      if (raw === '') return;
+      const v = Number(raw);
+      if (isNaN(v) || v < 0 || v > a.Max) { fuera++; return; }
+      items.push({ EstID: f.EstID, ActID: a.ActID, Valor: v });
+    });
+  });
+  S.ac.imp = items;
+  $('#ic_prev').innerHTML = '<div class="alert alert-' + (items.length ? 'success' : 'warning') + ' mb-0"><div><strong>' + ok + '</strong> estudiantes reconocidos · <strong>' + nA + '</strong> actividades reconocidas (' + d.acts.filter(a => colAct[a.ActID] !== undefined).map(a => esc(a.Nombre)).join(', ') + ')</div>' +
+    '<div><strong>' + items.length + '</strong> calificaciones por importar.' + (sinEst ? ' <span class="text-danger">' + sinEst + ' filas sin estudiante coincidente.</span>' : '') + (fuera ? ' <span class="text-danger">' + fuera + ' valores fuera de rango omitidos.</span>' : '') + '</div></div>';
+  $('#mdlOk').disabled = !items.length;
+}
+async function ejecutarImportCalif() {
+  const items = S.ac.imp || []; if (!items.length) throw new Error('No hay calificaciones por importar.');
+  for (let i = 0; i < items.length; i += 400) await llamar('actividades.guardarCalif', Object.assign(ctxP(), { items: items.slice(i, i + 400) }));
+  toast(items.length + ' calificaciones importadas'); cargarAc();
+}
+</script>

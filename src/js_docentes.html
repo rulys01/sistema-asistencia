@@ -1,0 +1,51 @@
+<script>
+/* ============================================================================
+ *  DOCENTES Y ASIGNATURAS (con esquema de evaluación por asignatura)
+ * ========================================================================== */
+MODS.docentes = async () => {
+  const d = S.dd = await llamar('docentes.listar'), P = S.perm.docentes, esqNom = {}; S.esqs.forEach(e => esqNom[e.EsquemaID] = e.Nombre);
+  const filaD = x => '<tr><td>' + esc(x.Nombre) + '</td><td class="d-none d-md-table-cell">' + esc(x.Correo) + '</td><td>' + badgeAct(x.Activo) + '</td><td class="text-end text-nowrap">' +
+    (P.editar && d.puedeTodo ? btnIco('primary', 'pencil', "formDocente('" + x.DocenteID + "')", 'Editar') : '') + ' ' +
+    (P.eliminar && d.puedeTodo ? btnIco('danger', 'trash', "delDocente('" + x.DocenteID + "')", 'Eliminar') : '') + '</td></tr>';
+  const filaA = x => '<tr class="' + (x.Archivada ? 'text-body-secondary' : '') + '"><td>' + esc(x.Asignatura) + (x.Archivada ? ' <span class="badge text-bg-secondary">Archivada</span>' : '') + '</td><td>' + esc(x.Grado) + ' ' + esc(x.Grupo) + '</td><td class="d-none d-md-table-cell">' + esc(x.Docente) + '</td><td class="d-none d-md-table-cell">' + esc(x.Ciclo) + '</td><td class="d-none d-lg-table-cell">' + esc(esqNom[x.EsquemaID] || '') + '</td><td>' + badgeAct(x.Activo) + '</td><td class="text-end text-nowrap">' +
+    (P.editar && !x.Archivada ? btnIco('primary', 'pencil', "formAsig('" + x.ClaseID + "')", 'Editar') : '') + ' ' +
+    (P.eliminar && !x.Archivada ? btnIco('danger', 'trash', "delAsig('" + x.ClaseID + "')", 'Eliminar') : '') + '</td></tr>';
+  render('<h2 class="h4 mb-3"><i class="bi bi-person-badge"></i> Docentes y asignaturas</h2>' +
+    '<ul class="nav nav-tabs mb-3"><li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tDoc">Docentes</button></li>' +
+    '<li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tAsig">Asignatura, grado y grupo</button></li></ul>' +
+    '<div class="tab-content"><div class="tab-pane fade show active" id="tDoc">' +
+    (P.crear && d.puedeTodo ? '<button class="btn btn-primary mb-3" onclick="formDocente()"><i class="bi bi-plus-lg"></i> Nuevo docente</button>' : '') +
+    '<div class="table-responsive card"><table class="table table-hover align-middle mb-0"><thead><tr><th>Nombre</th><th class="d-none d-md-table-cell">Correo</th><th>Estado</th><th></th></tr></thead><tbody>' +
+    (d.docentes.map(filaD).join('') || '<tr><td colspan="4" class="text-center text-body-secondary py-4">Sin docentes registrados.</td></tr>') + '</tbody></table></div></div>' +
+    '<div class="tab-pane fade" id="tAsig">' + (P.crear ? '<button class="btn btn-primary mb-3" onclick="formAsig()"><i class="bi bi-plus-lg"></i> Nueva asignatura</button>' : '') +
+    '<div class="table-responsive card"><table class="table table-hover align-middle mb-0"><thead><tr><th>Asignatura</th><th>Grado y grupo</th><th class="d-none d-md-table-cell">Docente</th><th class="d-none d-md-table-cell">Ciclo</th><th class="d-none d-lg-table-cell">Esquema</th><th>Estado</th><th></th></tr></thead><tbody>' +
+    (d.asignaciones.map(filaA).join('') || '<tr><td colspan="7" class="text-center text-body-secondary py-4">Sin asignaturas registradas.</td></tr>') + '</tbody></table></div>' +
+    '<p class="nota text-body-secondary mt-2 mb-0"><i class="bi bi-info-circle"></i> Lo que eliminas se envía a la <strong>Papelera</strong> y se puede restaurar con todos sus datos.</p></div></div>');
+};
+function formDocente(id) {
+  const x = id ? S.dd.docentes.find(d => d.DocenteID === id) : { Activo: true };
+  modal({ titulo: id ? 'Editar docente' : 'Nuevo docente',
+    cuerpo: fCampo('f_n', 'Nombre completo', x.Nombre) + fCampo('f_c', 'Correo (opcional)', x.Correo, 'email') + fSwitch('f_a', 'Activo', x.Activo),
+    onOk: async () => { await llamar('docentes.guardar', { DocenteID: id, Nombre: val('f_n'), Correo: val('f_c'), Activo: $('#f_a').checked }); toast('Docente guardado'); MODS.docentes(); } });
+}
+async function delDocente(id) {
+  if (!await confirmar('¿Enviar este docente a la papelera?')) return;
+  try { await llamar('docentes.eliminar', { DocenteID: id }); toast('Docente enviado a la papelera'); MODS.docentes(); } catch (e) { toast(e.message, 'danger'); }
+}
+function formAsig(id) {
+  const x = id ? S.dd.asignaciones.find(a => a.ClaseID === id) : { Activo: true, Ciclo: S.cfg.CICLO || '', EsquemaID: 'E3x2' };
+  const sel = S.dd.puedeTodo ? fSel('f_d', 'Docente', [['', '— Selecciona —']].concat(S.dd.docentes.map(d => [d.DocenteID, d.Nombre])), x.DocenteID) : '';
+  modal({ titulo: id ? 'Editar asignatura' : 'Nueva asignatura', cuerpo: sel + fCampo('f_as', 'Asignatura', x.Asignatura) +
+    '<div class="row"><div class="col-6">' + fCampo('f_g', 'Grado (ej. 2°)', x.Grado) + '</div><div class="col-6">' + fCampo('f_gr', 'Grupo (ej. E)', x.Grupo) + '</div></div>' +
+    fCampo('f_ci', 'Ciclo escolar', x.Ciclo) +
+    fSel('f_q', 'Esquema de evaluación', S.esqs.map(e => [e.EsquemaID, e.Nombre + ' (' + e.NumPeriodos + ' × ' + e.Parciales + ')']), x.EsquemaID) + fSwitch('f_a', 'Activa', x.Activo),
+    onOk: async () => {
+      await llamar('docentes.guardarAsig', { ClaseID: id, DocenteID: S.dd.puedeTodo ? val('f_d') : '', Asignatura: val('f_as'), Grado: val('f_g'), Grupo: val('f_gr'), Ciclo: val('f_ci'), EsquemaID: val('f_q'), Activo: $('#f_a').checked });
+      toast('Asignatura guardada'); await refrescarClases(); MODS.docentes();
+    } });
+}
+async function delAsig(id) {
+  if (!await confirmar('La asignatura se enviará a la papelera (conserva su asistencia y calificaciones y puede restaurarse). ¿Continuar?')) return;
+  try { await llamar('docentes.eliminarAsig', { ClaseID: id }); toast('Asignatura enviada a la papelera'); await refrescarClases(); MODS.docentes(); } catch (e) { toast(e.message, 'danger'); }
+}
+</script>

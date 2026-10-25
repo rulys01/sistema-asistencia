@@ -1,0 +1,126 @@
+<script>
+/* ============================================================================
+ *  REPORTES: formativa, final, lista de asistencia, boleta individual y reporte por grupo
+ *  (vista previa, impresión, PDF y Excel). El HTML se valida en el servidor con lista blanca.
+ * ========================================================================== */
+const CSS_REP = '@page{size:letter landscape;margin:10mm}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;margin:0;padding:10px;background:#fff}' +
+  '.enc{text-align:center;margin-bottom:8px}.enc img{max-height:60px;max-width:140px}.enc h1{font-size:15px;margin:2px 0}.enc h2{font-size:12px;margin:0;color:#444}.enc h3{font-size:13px;margin:6px 0 2px}' +
+  '.dat{margin:6px 0;font-size:11px}.dat span{margin-right:14px}' +
+  'table.rep{border-collapse:collapse;width:100%}table.rep th,table.rep td{border:1px solid #444;padding:3px 5px;text-align:center}table.rep th{background:#0d6efd;color:#fff;font-size:10px}' +
+  'table.rep td.nm{text-align:left;white-space:nowrap}table.rep tr.mx td{background:#e7f1ff;font-weight:bold}.bajo{color:#b02a37;font-weight:bold}' +
+  '.fir{margin-top:44px}.fir td{border:0;text-align:center;padding-top:4px;width:50%}.fir .ln{border-top:1px solid #000;margin:0 18%;padding-top:3px}.nt{font-size:9px;color:#555;margin-top:6px}';
+const repDoc = (titulo, cuerpo) => '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + esc(titulo) + '</title><style>' + CSS_REP + '</style></head><body>' + cuerpo + '</body></html>';
+const repEnc = (R, titulo, sub) => '<div class="enc">' + (R.logo ? '<img src="' + R.logo + '" alt="Logotipo">' : '') + '<h1>' + esc(R.cfg.INSTITUCION) + '</h1><h2>' + esc(R.cfg.ENCABEZADO2) + (R.cfg.CCT ? ' · CCT ' + esc(R.cfg.CCT) : '') + '</h2><h3>' + esc(titulo) + '</h3>' + (sub ? '<div>' + sub + '</div>' : '') + '</div>';
+const repFirmas = (R, docente) => '<table class="fir"><tr><td><div class="ln">' + esc(docente || 'Docente') + '</div>Docente</td><td><div class="ln">' + esc(R.cfg.DIRECTOR || ' ') + '</div>Director(a)</td></tr></table>';
+const calCls = (v, apr) => v != null && v < apr ? ' class="bajo"' : '';
+const datosClase = (c, extra) => '<div class="dat"><span><b>Asignatura:</b> ' + esc(c.Asignatura) + '</span><span><b>Grado y grupo:</b> ' + esc(c.Grado + ' ' + c.Grupo) + '</span><span><b>Docente:</b> ' + esc(c.Docente) + '</span><span><b>Ciclo:</b> ' + esc(c.Ciclo) + '</span>' + (extra || '') + '</div>';
+
+function repFormativa(R) {
+  const P = R.P, c = R.clase, apr = R.esq.Aprobatoria;
+  const mx = '<tr class="mx"><td></td><td class="nm">Valor máximo</td><td>' + fx(P.pesoAsis) + '</td>' + P.acts.map(a => '<td>' + fx(a.Max) + '</td>').join('') + '<td>' + fx(P.pesoLib) + '</td><td>10</td></tr>';
+  return repDoc('Evaluación formativa', repEnc(R, 'Evaluación formativa', esc(nomPer(c, R.t)) + ' · ' + esc(nomParc(R.pa)) + (P.per && P.per.Mes ? ' · ' + esc(P.per.Mes) : '')) + datosClase(c, '<span><b>Asistencias evaluadas:</b> ' + P.total + '</span>') +
+    '<table class="rep"><thead><tr><th>No.</th><th>Estudiante</th><th>Asistencia</th>' + P.acts.map(a => '<th>' + esc(a.Nombre) + '</th>').join('') + '<th>Libreta</th><th>Calif.</th></tr></thead><tbody>' + mx +
+    P.filas.map(f => '<tr><td>' + f.NumLista + '</td><td class="nm">' + esc(f.Nombre) + '</td><td>' + fx(f.ptsAsis) + '</td>' + P.acts.map(a => '<td>' + (f.vals[a.ActID] === '' ? '' : fx(f.vals[a.ActID])) + '</td>').join('') + '<td>' + fx(f.califL) + '</td><td' + calCls(f.gral, apr) + '><b>' + f1(f.gral) + '</b></td></tr>').join('') + '</tbody></table>' + repFirmas(R, c.Docente));
+}
+function repAsistencia(R) {
+  const P = R.P, c = R.clase;
+  return repDoc('Lista de asistencia', repEnc(R, 'Lista de asistencia', esc(nomPer(c, R.t)) + ' · ' + esc(nomParc(R.pa))) + datosClase(c, '<span><b>Asistencias evaluadas:</b> ' + P.total + '</span>') +
+    '<table class="rep"><thead><tr><th>No.</th><th>Estudiante</th>' + P.fechas.map(f => '<th>' + esc(fechaDe(f).toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit' })) + '</th>').join('') + '<th>Asist.</th><th>Ret.</th><th>Just.</th><th>Perm.</th><th>Faltas</th><th>%</th></tr></thead><tbody>' +
+    P.filas.map(f => '<tr><td>' + f.NumLista + '</td><td class="nm">' + esc(f.Nombre) + '</td>' + P.fechas.map(d => { const v = P.am[f.EstID + '|' + d]; return '<td' + (v === 0 ? ' class="bajo"' : '') + '>' + simAs(v) + '</td>'; }).join('') +
+      '<td>' + f.presentes + '</td><td>' + f.retardos + '</td><td>' + f.justificadas + '</td><td>' + f.permisos + '</td><td>' + f.faltas + '</td><td>' + Math.round(f.pct) + '%</td></tr>').join('') + '</tbody></table>' +
+    '<div class="nt">A = asistencia · R = retardo · J = justificada · PM = permiso · F = falta</div>' + repFirmas(R, c.Docente));
+}
+function repFinal(R) {
+  const c = R.clase, N = R.esq.NumPeriodos, NP = R.esq.Parciales, apr = R.esq.Aprobatoria, rng = n => Array.from({ length: n }, (_, i) => i);
+  const th1 = rng(N).map(t => '<th colspan="' + (NP + 1) + '">' + esc(nomPer(c, t + 1).toUpperCase()) + '</th>').join('');
+  const th2 = rng(N).map(t => rng(NP).map(p => '<th>P' + (p + 1) + '</th>').join('') + '<th>CAL.</th>').join('');
+  return repDoc('Evaluación final', repEnc(R, 'Evaluación final', 'Ciclo escolar ' + esc(c.Ciclo)) + datosClase(c) +
+    '<table class="rep"><thead><tr><th rowspan="2">No.</th><th rowspan="2">Estudiante</th>' + th1 + '<th rowspan="2">FINAL</th></tr><tr>' + th2 + '</tr></thead><tbody>' +
+    R.ests.map(e => { const a = R.anual[e.EstID]; return '<tr><td>' + e.NumLista + '</td><td class="nm">' + esc(e.Nombre) + '</td>' +
+      a.trim.map(t => t.p.map(g => '<td>' + (g == null ? '' : f1(g)) + '</td>').join('') + '<td><b>' + (t.cal == null ? '' : t.cal) + '</b></td>').join('') +
+      '<td' + calCls(a.final, apr) + '><b>' + (a.final == null ? '' : f1(a.final)) + '</b>' + (a.provisional && a.final != null ? '*' : '') + '</td></tr>'; }).join('') + '</tbody></table>' +
+    '<div class="nt">* Calificación provisional: aún no se completan todos los periodos.</div>' + repFirmas(R, c.Docente));
+}
+function repBoleta(R) {
+  const N = Math.max.apply(null, R.materias.map(m => m.esq.NumPeriodos)), rng = n => Array.from({ length: n }, (_, i) => i), nom = R.materias[0].esq.NombrePeriodo;
+  const fin = R.materias.filter(m => m.final != null), prom = fin.length ? fin.reduce((s, m) => s + m.final, 0) / fin.length : null;
+  return repDoc('Boleta de calificaciones', repEnc(R, 'Boleta de calificaciones', 'Ciclo escolar ' + esc(R.ins.Ciclo)) +
+    '<div class="dat"><span><b>Estudiante:</b> ' + esc(R.est.nombre) + '</span><span><b>Matrícula:</b> ' + esc(R.est.matricula) + '</span><span><b>Grado y grupo:</b> ' + esc(R.ins.Grado + ' ' + R.ins.Grupo) + '</span></div>' +
+    '<table class="rep"><thead><tr><th>Asignatura</th><th>Docente</th>' + rng(N).map(t => '<th>' + esc(ORD[t].slice(0, 3) + '. ' + nom.slice(0, 4) + '.') + '</th>').join('') + '<th>Final</th></tr></thead><tbody>' +
+    R.materias.map(m => '<tr><td class="nm">' + esc(m.asignatura) + '</td><td class="nm">' + esc(m.docente) + '</td>' + rng(N).map(t => '<td>' + (m.trim[t] && m.trim[t].cal != null ? m.trim[t].cal : '') + '</td>').join('') +
+      '<td' + calCls(m.final, m.esq.Aprobatoria) + '><b>' + (m.final == null ? '' : f1(m.final)) + '</b>' + (m.provisional && m.final != null ? '*' : '') + '</td></tr>').join('') +
+    '<tr class="mx"><td class="nm" colspan="' + (N + 2) + '">Promedio general</td><td>' + (prom == null ? '' : f1(prom)) + '</td></tr></tbody></table>' +
+    '<div class="nt">* Calificación provisional: aún no se completan todos los periodos.</div>' + repFirmas(R, ''));
+}
+function repGrupo(R) {
+  const fin = e => R.clases.map(c => R.matriz[e.EstID][c.ClaseID]);
+  return repDoc('Reporte por grupo', repEnc(R, 'Reporte de calificaciones por grupo', 'Ciclo escolar ' + esc(R.ciclo)) + '<div class="dat"><span><b>Grado y grupo:</b> ' + esc(R.Grado + ' ' + R.Grupo) + '</span></div>' +
+    '<table class="rep"><thead><tr><th>No.</th><th>Estudiante</th>' + R.clases.map(c => '<th>' + esc(c.Asignatura) + '</th>').join('') + '<th>Promedio</th></tr></thead><tbody>' +
+    R.ests.map(e => { const v = fin(e), con = v.filter(x => x && x.f != null), prom = con.length ? con.reduce((s, x) => s + x.f, 0) / con.length : null;
+      return '<tr><td>' + e.NumLista + '</td><td class="nm">' + esc(e.Nombre) + '</td>' + v.map((x, i) => '<td' + calCls(x && x.f, R.clases[i].aprobatoria) + '>' + (x && x.f != null ? f1(x.f) + (x.pr ? '*' : '') : '') + '</td>').join('') + '<td' + calCls(prom, 6) + '><b>' + (prom == null ? '' : f1(prom)) + '</b></td></tr>'; }).join('') +
+    '<tr class="mx"><td></td><td class="nm">Promedio del grupo</td>' + R.clases.map(c => { const v = R.ests.map(e => R.matriz[e.EstID][c.ClaseID]).filter(x => x && x.f != null); return '<td>' + (v.length ? f1(v.reduce((s, x) => s + x.f, 0) / v.length) : '') + '</td>'; }).join('') + '<td></td></tr></tbody></table>' +
+    '<div class="nt">* Calificación provisional. Cada asignatura se califica con su propio esquema de evaluación.</div>' + repFirmas(R, ''));
+}
+
+/* ---------- Excel ---------- */
+function excelDe(R) {
+  const t = R.tipo, aoa = [], enc = R.cfg ? [R.cfg.INSTITUCION, R.cfg.ENCABEZADO2] : [];
+  enc.forEach(x => aoa.push([x]));
+  if (t === 'formativa') { const P = R.P; aoa.push(['Evaluación formativa', R.clase.Asignatura, R.clase.Grado + ' ' + R.clase.Grupo, nomPer(R.clase, R.t), nomParc(R.pa)], []);
+    aoa.push(['No.', 'Estudiante', 'Asistencia'].concat(P.acts.map(a => a.Nombre + ' (' + fx(a.Max) + ')'), ['Libreta', 'Calificación']));
+    P.filas.forEach(f => aoa.push([f.NumLista, f.Nombre, +fx(f.ptsAsis)].concat(P.acts.map(a => f.vals[a.ActID] === '' ? '' : +f.vals[a.ActID]), [+fx(f.califL), +f1(f.gral)]))); }
+  else if (t === 'asistencia') { const P = R.P; aoa.push(['Lista de asistencia', R.clase.Asignatura, R.clase.Grado + ' ' + R.clase.Grupo, nomPer(R.clase, R.t), nomParc(R.pa)], []);
+    aoa.push(['No.', 'Estudiante'].concat(P.fechas, ['Asistencias', 'Retardos', 'Justificadas', 'Permisos', 'Faltas', '%']));
+    P.filas.forEach(f => aoa.push([f.NumLista, f.Nombre].concat(P.fechas.map(d => simAs(P.am[f.EstID + '|' + d])), [f.presentes, f.retardos, f.justificadas, f.permisos, f.faltas, Math.round(f.pct)]))); }
+  else if (t === 'final') { const N = R.esq.NumPeriodos, NP = R.esq.Parciales; aoa.push(['Evaluación final', R.clase.Asignatura, R.clase.Grado + ' ' + R.clase.Grupo, R.clase.Ciclo], []);
+    const h = ['No.', 'Estudiante']; for (let i = 0; i < N; i++) { for (let p = 0; p < NP; p++) h.push((i + 1) + 'T P' + (p + 1)); h.push((i + 1) + 'T Cal.'); } h.push('Final'); aoa.push(h);
+    R.ests.forEach(e => { const a = R.anual[e.EstID], r = [e.NumLista, e.Nombre]; a.trim.forEach(x => { x.p.forEach(g => r.push(g == null ? '' : +f1(g))); r.push(x.cal == null ? '' : x.cal); }); r.push(a.final == null ? '' : +f1(a.final)); aoa.push(r); }); }
+  else if (t === 'boleta') { aoa.push(['Boleta', R.est.nombre, R.est.matricula, R.ins.Grado + ' ' + R.ins.Grupo, R.ins.Ciclo], []);
+    const N = Math.max.apply(null, R.materias.map(m => m.esq.NumPeriodos)); aoa.push(['Asignatura', 'Docente'].concat(Array.from({ length: N }, (_, i) => 'Periodo ' + (i + 1)), ['Final']));
+    R.materias.forEach(m => aoa.push([m.asignatura, m.docente].concat(Array.from({ length: N }, (_, i) => m.trim[i] && m.trim[i].cal != null ? m.trim[i].cal : ''), [m.final == null ? '' : +f1(m.final)]))); }
+  else if (t === 'grupo') { aoa.push(['Reporte por grupo', R.Grado + ' ' + R.Grupo, R.ciclo], []); aoa.push(['No.', 'Estudiante'].concat(R.clases.map(c => c.Asignatura), ['Promedio']));
+    R.ests.forEach(e => { const v = R.clases.map(c => R.matriz[e.EstID][c.ClaseID]), con = v.filter(x => x && x.f != null); aoa.push([e.NumLista, e.Nombre].concat(v.map(x => x && x.f != null ? +f1(x.f) : ''), [con.length ? +f1(con.reduce((s, x) => s + x.f, 0) / con.length) : ''])); }); }
+  return aoa;
+}
+
+/* ---------- Pantalla ---------- */
+MODS.reportes = async () => {
+  if (!S.clases.length) return render(barraCtx());
+  render('<h2 class="h4 mb-3"><i class="bi bi-file-earmark-text"></i> Reportes</h2>' + barraCtx() +
+    '<div class="card mb-3"><div class="card-body"><div class="row g-2 align-items-end"><div class="col-12 col-md-4"><label class="form-label small mb-0" for="rp_t">Tipo de reporte</label><select id="rp_t" class="form-select">' +
+    [['formativa', 'Evaluación formativa (parcial)'], ['asistencia', 'Lista de asistencia (parcial)'], ['final', 'Evaluación final (ciclo)'], ['boleta', 'Boleta individual (todas las materias)'], ['grupo', 'Reporte por grupo (todas las materias)']]
+      .map(o => '<option value="' + o[0] + '"' + (S.rp.tipo === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></div>' +
+    '<div class="col-12 col-md-4" id="rp_estw" style="display:none"><label class="form-label small mb-0" for="rp_e">Estudiante</label><select id="rp_e" class="form-select"></select></div>' +
+    '<div class="col-12 col-md d-flex flex-wrap gap-2"><button class="btn btn-primary" onclick="generarRep()"><i class="bi bi-eye"></i> Generar</button>' +
+    '<button class="btn btn-outline-secondary rp-ac" onclick="imprimirRep()" disabled><i class="bi bi-printer"></i> Imprimir</button><button class="btn btn-outline-danger rp-ac" onclick="pdfRep()" disabled><i class="bi bi-file-earmark-pdf"></i> PDF</button><button class="btn btn-outline-success rp-ac" onclick="excelRep()" disabled><i class="bi bi-file-earmark-excel"></i> Excel</button></div></div></div></div>' +
+    '<div id="rpVista" class="rep-wrap"><div class="text-center text-body-secondary py-5">Elige el tipo de reporte y pulsa <strong>Generar</strong>.</div></div>');
+  bindCtx(); S.rp.R = null;
+  $('#rp_t').onchange = () => { S.rp.tipo = $('#rp_t').value; ajustarRepEst(); };
+  ajustarRepEst();
+};
+async function ajustarRepEst() {
+  const b = S.rp.tipo === 'boleta'; $('#rp_estw').style.display = b ? '' : 'none';
+  if (b && !$('#rp_e').options.length) {
+    try { const l = await llamar('reportes.estudiantes', { ClaseID: S.ctx.claseId }); $('#rp_e').innerHTML = l.map(e => '<option value="' + e.EstID + '">' + e.NumLista + '. ' + esc(e.Nombre) + '</option>').join(''); } catch (e) { toast(e.message, 'danger'); }
+  }
+}
+async function generarRep() {
+  try {
+    await vaciarTodo();
+    const t = S.rp.tipo, c = claseActual(); let R, html, nombre;
+    if (t === 'boleta') { if (!$('#rp_e').value) throw new Error('Selecciona un estudiante.'); R = await llamar('reportes.boleta', { EstID: $('#rp_e').value }); R.tipo = t; html = repBoleta(R); nombre = 'Boleta_' + R.est.matricula; }
+    else if (t === 'grupo') { R = await llamar('reportes.grupo', { Grado: c.Grado, Grupo: c.Grupo, Ciclo: c.Ciclo }); R.tipo = t; html = repGrupo(R); nombre = 'Grupo_' + c.Grado + c.Grupo; }
+    else { R = await llamar('reportes.datos', Object.assign(ctxP(), { tipo: t })); R.tipo = t;
+      html = t === 'formativa' ? repFormativa(R) : t === 'asistencia' ? repAsistencia(R) : repFinal(R);
+      nombre = t + '_' + c.Asignatura.replace(/\W+/g, '_') + '_' + c.Grado + c.Grupo + (t === 'final' ? '' : '_' + S.ctx.t + 'T' + S.ctx.p + 'P'); }
+    S.rp.R = R; S.rp.html = html; S.rp.nombre = nombre;
+    $('#rpVista').innerHTML = '<iframe id="rpFrame" title="Vista previa del reporte" style="width:100%;height:75vh;border:0;background:#fff"></iframe>';
+    $('#rpFrame').srcdoc = html; $$('.rp-ac').forEach(b => b.disabled = false);
+  } catch (e) { toast(e.message, 'danger'); }
+}
+function imprimirRep() { const w = $('#rpFrame').contentWindow; w.focus(); w.print(); }
+async function pdfRep() {
+  try { const r = await llamar('reportes.pdf', { html: S.rp.html, nombre: S.rp.nombre }); descargarBlob(b64ABlob(r.b64, 'application/pdf'), r.nombre); } catch (e) { toast(e.message, 'danger'); }
+}
+function excelRep() { descargarXlsx(excelDe(S.rp.R), S.rp.tipo, S.rp.nombre); }
+</script>
